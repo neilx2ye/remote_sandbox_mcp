@@ -6,28 +6,20 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import type { AppConfig } from "./config.js";
 import { scopeForProject, type ProjectsStore } from "./projects.js";
+import type { OAuthStore } from "./oauth.js";
+import { handleOAuthRequest, firstHeader, protectedResourceMetadataUrl } from "./oauth-http.js";
 import { createServer } from "./server.js";
 import { handleAdminApi, sendJson } from "./admin.js";
 import type { AuditLog } from "./util/audit.js";
+import { tokenMatches } from "./util/token.js";
 
 const MAX_BODY_BYTES = 4 * 1024 * 1024;
 
 export interface HttpContext {
   config: AppConfig;
   store: ProjectsStore;
+  oauth: OAuthStore;
   audit: AuditLog;
-}
-
-function sha256(s: string): Buffer {
-  return crypto.createHash("sha256").update(s, "utf8").digest();
-}
-
-/** Constant-time token comparison (hashed first so length never leaks). */
-export function tokenMatches(provided: string | null, expected: string): boolean {
-  if (!provided) return false;
-  const a = sha256(provided);
-  const b = sha256(expected);
-  return crypto.timingSafeEqual(a, b);
 }
 
 function extractToken(req: http.IncomingMessage, url: URL): string | null {
@@ -84,8 +76,26 @@ interface SessionEntry {
   slug: string;
 }
 
+/**
+ * CORS for browser-based MCP clients: the 401 challenge must be readable so the
+ * client can discover where to authorize. Only reflected when an Origin is sent;
+ * there are no cookies, so credential-less CORS adds no ambient authority.
+ */
+function applyMcpCors(req: http.IncomingMessage, res: http.ServerResponse): void {
+  const origin = firstHeader(req.headers.origin);
+  if (!origin) return;
+  res.setHeader("Access-Control-Allow-Origin", origin);
+  res.setHeader("Vary", "Origin");
+  res.setHeader("Access-Control-Allow-Methods", "POST, GET, DELETE, OPTIONS");
+  res.setHeader(
+    "Access-Control-Allow-Headers",
+    "Content-Type, Authorization, Mcp-Session-Id, MCP-Protocol-Version, Last-Event-ID",
+  );
+  res.setHeader("Access-Control-Expose-Headers", "WWW-Authenticate, Mcp-Session-Id");
+}
+
 export function startHttpServer(ctx: HttpContext): http.Server {
-  const { config, store, audit } = ctx;
+  const { config, store, audit, oauth } = ctx;
   const sessions = new Map<string, SessionEntry>();
 
   const httpServer = http.createServer(async (req, res) => {
@@ -117,13 +127,19 @@ export function startHttpServer(ctx: HttpContext): http.Server {
         return;
       }
 
+      // OAuth 2.1 authorization server + RFC 9728/8414 discovery (needed by
+      // clients that authorize a connector instead of pasting a project token).
+      if (await handleOAuthRequest({ config, store, oauth, audit }, req, res, url)) {
+        return;
+      }
+
       // Admin API: always requires the admin token.
       if (pathname === "/api" || pathname.startsWith("/api/")) {
         if (!tokenMatches(extractBearer(req), config.adminToken ?? "")) {
           sendJson(res, 401, { error: "Unauthorized: invalid or missing admin token" });
           return;
         }
-        await handleAdminApi(req, res, url, store, config);
+        await handleAdminApi(req, res, url, store, config, oauth);
         return;
       }
 
@@ -140,10 +156,41 @@ export function startHttpServer(ctx: HttpContext): http.Server {
         return;
       }
 
-      // Per-project token auth.
-      if (!tokenMatches(extractToken(req, url), project.token)) {
-        jsonRpcError(res, 401, -32001, "Unauthorized: invalid or missing token");
+      applyMcpCors(req, res);
+      if (req.method === "OPTIONS") {
+        res.writeHead(204);
+        res.end();
         return;
+      }
+
+      // Per-project token auth: the project's static token, or an OAuth access
+      // token that was authorized for exactly this project.
+      const provided = extractToken(req, url);
+      if (!tokenMatches(provided, project.token)) {
+        const grant = provided ? oauth.verifyAccessToken(provided) : null;
+        if (grant && grant.projectSlug !== project.slug) {
+          jsonRpcError(
+            res,
+            403,
+            -32003,
+            `Forbidden: this OAuth token is authorized for project "${grant.projectSlug}", not "${slug}"`,
+          );
+          return;
+        }
+        if (!grant) {
+          // RFC 6750 challenge so MCP clients can start the OAuth flow.
+          res.setHeader(
+            "WWW-Authenticate",
+            `Bearer realm="remote-sandbox-mcp", resource_metadata="${protectedResourceMetadataUrl(req, config, slug)}", error="invalid_token", error_description="a project token or an authorized OAuth access token is required"`,
+          );
+          jsonRpcError(
+            res,
+            401,
+            -32001,
+            "Unauthorized: invalid or missing token (use this project's token, or authorize via OAuth)",
+          );
+          return;
+        }
       }
 
       const sessionId = req.headers["mcp-session-id"] as string | undefined;

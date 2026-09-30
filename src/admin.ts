@@ -3,6 +3,7 @@ import path from "node:path";
 import type http from "node:http";
 import type { AppConfig } from "./config.js";
 import { maskToken, StoreError, type Project, type ProjectsStore } from "./projects.js";
+import type { OAuthStore } from "./oauth.js";
 import { resolveWithinRoot, toRelPosix, SandboxError } from "./sandbox.js";
 import { looksBinary, truncateUtf8 } from "./util/text.js";
 
@@ -153,11 +154,28 @@ export async function handleAdminApi(
   url: URL,
   store: ProjectsStore,
   config: AppConfig,
+  oauth: OAuthStore,
 ): Promise<void> {
   const seg = url.pathname.split("/").filter(Boolean); // ["api", "projects", id?, action?]
   const method = req.method ?? "GET";
 
   try {
+    // /api/oauth/clients — list authorized OAuth clients (read-only, masked secrets).
+    if (seg[1] === "oauth") {
+      if (seg[2] === "clients" && seg.length === 3 && method === "GET") {
+        sendJson(res, 200, { clients: oauth.listClients(), stats: oauth.stats() });
+        return;
+      }
+      if (seg[2] === "clients" && seg.length === 4 && method === "DELETE") {
+        const clientId = decodeURIComponent(seg[3]);
+        if (!oauth.removeClient(clientId)) throw new StoreError(404, `oauth client not found: ${clientId}`);
+        sendJson(res, 200, { ok: true, clients: oauth.listClients(), stats: oauth.stats() });
+        return;
+      }
+      sendJson(res, 404, { error: "not found" });
+      return;
+    }
+
     if (seg[1] !== "projects") {
       sendJson(res, 404, { error: "not found" });
       return;

@@ -6,6 +6,7 @@ import type http from "node:http";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { AppConfig } from "../src/config.js";
 import { ProjectsStore } from "../src/projects.js";
+import { OAuthStore } from "../src/oauth.js";
 import { startHttpServer } from "../src/http.js";
 import { AuditLog } from "../src/util/audit.js";
 import { cleanup, makeTempDir } from "./helpers.js";
@@ -65,10 +66,12 @@ beforeAll(async () => {
     readOnly: false,
     stdio: false,
     exec: { enabled: true, timeoutMs: 5000, allow: [], deny: [] },
+    publicUrl: null,
     projectDir: tmp,
     auditLogPath: path.join(tmp, "logs", "audit.jsonl"),
     dataDir: path.join(tmp, "data"),
     projectsFile: path.join(tmp, "data", "projects.json"),
+    oauthFile: path.join(tmp, "data", "oauth.json"),
     publicDir: fileURLToPath(new URL("../public", import.meta.url)),
     seedRoot: tmp,
     seedToken: null,
@@ -80,7 +83,12 @@ beforeAll(async () => {
   tokenB = pb.token;
   idA = pa.id;
 
-  server = startHttpServer({ config, store, audit: new AuditLog(config.auditLogPath) });
+  server = startHttpServer({
+    config,
+    store,
+    oauth: new OAuthStore(config.oauthFile),
+    audit: new AuditLog(config.auditLogPath),
+  });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 });

@@ -29,10 +29,13 @@ export interface AppConfig {
   stdio: boolean;
   /** Global exec defaults; exec.enabled=false is a master switch for all projects. */
   exec: ExecConfig;
+  /** Explicit public origin for OAuth metadata (behind a tunnel/CDN). */
+  publicUrl: string | null;
   projectDir: string;
   auditLogPath: string;
   dataDir: string;
   projectsFile: string;
+  oauthFile: string;
   publicDir: string;
   /** Seed sources for the initial "default" project (from CLI/env/config file). */
   seedRoot: string;
@@ -45,6 +48,7 @@ interface CliArgs {
   host?: string;
   token?: string;
   adminToken?: string;
+  publicUrl?: string;
   stdio?: boolean;
   readOnly?: boolean;
   noExec?: boolean;
@@ -87,6 +91,9 @@ export function parseCliArgs(argv: string[]): CliArgs {
       case "--admin-token":
         out.adminToken = next();
         break;
+      case "--public-url":
+        out.publicUrl = next();
+        break;
       case "--stdio":
         out.stdio = true;
         break;
@@ -121,16 +128,19 @@ Options:
   --host <addr>       HTTP bind address (default 127.0.0.1)
   --token <token>     Seed token for the initial "default" project
   --admin-token <t>   Admin console / API token (default: random, printed at startup)
+  --public-url <url>  Public origin used in OAuth metadata, e.g. https://mcp.example.com
+                      (default: derived from Host / X-Forwarded-* headers)
   --stdio             Serve MCP over stdio (uses the "default" project) instead of HTTP
   --readonly          Master switch: every project becomes read-only
   --no-exec           Master switch: disable exec_run for all projects
   --config <path>     Config file path (default ./sandbox.config.json)
   --help              Show this help
 
-Environment: MCP_ROOT, MCP_PORT, MCP_HOST, MCP_TOKEN, MCP_ADMIN_TOKEN
+Environment: MCP_ROOT, MCP_PORT, MCP_HOST, MCP_TOKEN, MCP_ADMIN_TOKEN, MCP_PUBLIC_URL
 Priority: CLI args > env > config file > defaults
 
 MCP endpoints: /mcp (default project) and /mcp/<slug> per project.
+OAuth (connector authorization): /.well-known/*, /oauth/* - expose these on the tunnel too.
 Admin console: /admin (use only via local access or SSH port-forward).
 `);
 }
@@ -141,6 +151,7 @@ interface FileConfig {
   port?: number;
   token?: string;
   adminToken?: string;
+  publicUrl?: string;
   maxFileBytes?: number;
   readOnly?: boolean;
   exec?: {
@@ -193,6 +204,23 @@ export function loadConfig(argv: string[] = process.argv.slice(2)): AppConfig {
   const adminTokenRaw = cli.adminToken ?? env.MCP_ADMIN_TOKEN ?? file.adminToken ?? null;
   const adminToken = adminTokenRaw && adminTokenRaw.trim().length > 0 ? adminTokenRaw : null;
 
+  const publicUrlRaw = cli.publicUrl ?? env.MCP_PUBLIC_URL ?? file.publicUrl ?? null;
+  const publicUrl = publicUrlRaw && publicUrlRaw.trim().length > 0 ? publicUrlRaw.trim().replace(/\/+$/, "") : null;
+  if (publicUrl) {
+    let parsed: URL;
+    try {
+      parsed = new URL(publicUrl);
+    } catch {
+      throw new Error(`Invalid public URL (--public-url / MCP_PUBLIC_URL): ${publicUrl}`);
+    }
+    if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+      throw new Error(`Public URL must be http(s): ${publicUrl}`);
+    }
+    if (parsed.search || parsed.hash) {
+      throw new Error(`Public URL must not carry a query string or fragment: ${publicUrl}`);
+    }
+  }
+
   const maxFileBytes = file.maxFileBytes ?? DEFAULTS.maxFileBytes;
   if (!Number.isInteger(maxFileBytes) || maxFileBytes <= 0) {
     throw new Error(`Invalid maxFileBytes: ${maxFileBytes}`);
@@ -215,10 +243,12 @@ export function loadConfig(argv: string[] = process.argv.slice(2)): AppConfig {
       allow: file.exec?.allow ?? [],
       deny: file.exec?.deny ?? [],
     },
+    publicUrl,
     projectDir,
     auditLogPath: path.join(projectDir, "logs", "audit.jsonl"),
     dataDir: path.join(projectDir, "data"),
     projectsFile: path.join(projectDir, "data", "projects.json"),
+    oauthFile: path.join(projectDir, "data", "oauth.json"),
     publicDir: defaultPublicDir(),
     seedRoot: "",
     seedToken,

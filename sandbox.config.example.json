@@ -4,6 +4,7 @@
   "port": 8787,
   "token": "seed-token-for-the-default-project",
   "adminToken": "change-me-to-a-long-random-string",
+  "publicUrl": "https://mcp.example.com",
   "maxFileBytes": 5242880,
   "readOnly": false,
   "exec": {

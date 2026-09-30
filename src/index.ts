@@ -1,6 +1,7 @@
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { loadConfig, type AppConfig } from "./config.js";
 import { generateToken, ProjectsStore, scopeForProject, seedDefaultProject } from "./projects.js";
+import { OAuthStore } from "./oauth.js";
 import { AuditLog } from "./util/audit.js";
 import { createServer } from "./server.js";
 import { startHttpServer } from "./http.js";
@@ -28,6 +29,7 @@ async function main(): Promise<void> {
 
   const audit = new AuditLog(config.auditLogPath);
   const store = new ProjectsStore(config.projectsFile);
+  const oauth = new OAuthStore(config.oauthFile);
 
   // Migration: seed the "default" project from legacy single-sandbox config
   // (keeps existing connector configs working).
@@ -62,7 +64,7 @@ async function main(): Promise<void> {
     return;
   }
 
-  const httpServer = startHttpServer({ config: { ...config, adminToken }, store, audit });
+  const httpServer = startHttpServer({ config: { ...config, adminToken }, store, oauth, audit });
   await new Promise<void>((resolve, reject) => {
     httpServer.once("error", reject);
     httpServer.listen(config.port, config.host, () => resolve());
@@ -79,6 +81,14 @@ async function main(): Promise<void> {
   for (const p of store.list()) {
     banner.push(`  /mcp/${p.slug}  ->  ${p.root}${p.readOnly ? "  [read-only]" : ""}${p.execEnabled ? "" : "  [exec off]"}`);
   }
+  banner.push(
+    ``,
+    `OAuth (connector authorization, pick the project on the consent page):`,
+    `  discovery    : /.well-known/oauth-protected-resource[/mcp/<slug>]  and  /.well-known/oauth-authorization-server`,
+    `  authorize    : /oauth/authorize   (open in a browser, log in with the admin token)`,
+    `  public origin: ${config.publicUrl ?? "(derived per request from Host / X-Forwarded-*)"}`,
+    `  NOTE: a public tunnel must expose /.well-known/* and /oauth/* as well as /mcp*.`,
+  );
   if (seeded?.tokenGenerated) {
     banner.push(
       ``,
@@ -97,7 +107,7 @@ async function main(): Promise<void> {
   }
   banner.push(
     ``,
-    `WARNING: keep /admin and /api OFF public tunnels - expose only /mcp`,
+    `WARNING: keep /admin and /api OFF public tunnels - expose only /mcp* (+ /.well-known/*, /oauth/* when using OAuth)`,
     `and access the console locally or via: ssh -L ${config.port}:127.0.0.1:${config.port} <server>`,
   );
   printBanner(banner);

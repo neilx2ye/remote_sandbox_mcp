@@ -111,6 +111,7 @@
     $("#view-main").classList.remove("hidden");
     $("#btn-logout").classList.remove("hidden");
     loadProjects();
+    loadOAuthClients();
   }
 
   $("#form-login").addEventListener("submit", function (ev) {
@@ -233,6 +234,67 @@
   }
 
   $("#btn-refresh").addEventListener("click", loadProjects);
+
+  /* ---------- OAuth 授权客户端 ---------- */
+
+  function loadOAuthClients() {
+    return apiJson("/api/oauth/clients").then(function (data) {
+      renderOAuthClients(data.clients || [], data.stats || {});
+    }).catch(function (err) {
+      if (err.message !== "unauthorized") showBanner("加载 OAuth 客户端失败：" + err.message, true);
+    });
+  }
+
+  function renderOAuthClients(clients, stats) {
+    var tbody = $("#tbl-oauth tbody");
+    tbody.textContent = "";
+    $("#oauth-empty").classList.toggle("hidden", clients.length > 0);
+    $("#oauth-count").textContent = clients.length
+      ? "共 " + clients.length + " 个客户端 · " + (stats.accessTokens || 0) + " 个有效令牌"
+      : "";
+
+    clients.forEach(function (c) {
+      var tr = el("tr");
+
+      var nameTd = el("td");
+      nameTd.appendChild(el("div", { class: "oauth-client-name" }, c.clientName || "(未命名客户端)"));
+      nameTd.appendChild(el("div", { class: "slug-line mono" }, c.clientId));
+      tr.appendChild(nameTd);
+
+      var projTd = el("td");
+      if (c.projects && c.projects.length) {
+        var wrap = el("div", { class: "oauth-projects" });
+        c.projects.forEach(function (slug) {
+          var p = state.projects.find(function (x) { return x.slug === slug; });
+          wrap.appendChild(el("span", { class: "mcp-path" }, "/mcp/" + slug + (p ? "（" + p.name + "）" : "")));
+        });
+        projTd.appendChild(wrap);
+      } else {
+        projTd.appendChild(el("span", { class: "muted" }, "无有效令牌"));
+      }
+      tr.appendChild(projTd);
+
+      tr.appendChild(el("td", null, c.confidential ? "client_secret" : "公开客户端（PKCE）"));
+      tr.appendChild(el("td", null, fmtTime(c.createdAt)));
+      tr.appendChild(el("td", null, fmtTime(c.lastUsedAt)));
+
+      var actTd = el("td", { class: "actions" });
+      var btnRevoke = el("button", { class: "btn btn-small btn-danger" }, "撤销授权");
+      btnRevoke.addEventListener("click", function () {
+        if (!confirm("撤销客户端「" + (c.clientName || c.clientId) + "」的全部授权吗？\n该客户端已签发的 access/refresh token 会立即失效，需要重新授权。")) return;
+        apiJson("/api/oauth/clients/" + encodeURIComponent(c.clientId), { method: "DELETE" }).then(function (data) {
+          showBanner("已撤销该客户端的授权");
+          renderOAuthClients(data.clients || [], data.stats || {});
+        }).catch(function (err) { showBanner("撤销失败：" + err.message, true); });
+      });
+      actTd.appendChild(btnRevoke);
+      tr.appendChild(actTd);
+
+      tbody.appendChild(tr);
+    });
+  }
+
+  $("#btn-refresh-oauth").addEventListener("click", loadOAuthClients);
 
   /* ---------- 新建 / 编辑表单 ---------- */
 

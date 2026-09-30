@@ -81,6 +81,30 @@
     <p id="projects-empty" class="muted empty-note hidden">暂无项目，点击"新建项目"创建第一个。</p>
   </section>
 
+  <!-- OAuth 授权 -->
+  <section class="card">
+    <div class="toolbar" style="margin-bottom:12px">
+      <h2>OAuth 授权<span id="oauth-count" class="count"></span></h2>
+      <div class="toolbar-actions">
+        <button id="btn-refresh-oauth" class="btn">刷新</button>
+      </div>
+    </div>
+    <p class="muted oauth-hint">
+      连接器走 OAuth 时，AI 客户端会访问 <span class="mcp-path">/.well-known/oauth-protected-resource/mcp/&lt;slug&gt;</span>、
+      <span class="mcp-path">/.well-known/oauth-authorization-server</span> 与 <span class="mcp-path">/oauth/authorize</span>（前面拼隧道域名），
+      在授权页面里用 Admin Token 登录并选择要开放的项目。授权令牌只对所选项目的 <span class="mcp-path">/mcp/&lt;slug&gt;</span> 有效。
+    </p>
+    <div class="tbl-wrap">
+      <table class="tbl" id="tbl-oauth">
+        <thead>
+          <tr><th>客户端</th><th>已授权项目</th><th>凭证</th><th>首次注册</th><th>最近使用</th><th>操作</th></tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <p id="oauth-empty" class="muted empty-note hidden">暂无 OAuth 客户端。AI 客户端首次发起授权时会自动注册。</p>
+  </section>
+
   <!-- 文件浏览 -->
   <section id="panel-browser" class="card hidden">
     <div class="browser-head">

@@ -330,6 +330,16 @@ main { max-width: 1400px; margin: 0 auto; padding: 24px 22px 72px; }
 
 .empty-note { padding: 26px 0; text-align: center; font-size: 0.85rem; }
 
+/* ---------- OAuth 授权 ---------- */
+
+.oauth-hint { margin: 0 0 16px; font-size: 0.8rem; line-height: 2; }
+#tbl-oauth { min-width: 900px; }
+#tbl-oauth td:nth-child(3),
+#tbl-oauth td:nth-child(4),
+#tbl-oauth td:nth-child(5) { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.oauth-client-name { margin-bottom: 3px; color: var(--text); font-size: 0.88rem; font-weight: 600; }
+.oauth-projects { display: flex; flex-wrap: wrap; gap: 5px; }
+
 /* ---------- 文件浏览 ---------- */
 
 .browser-head {
