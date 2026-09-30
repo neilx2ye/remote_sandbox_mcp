@@ -74,9 +74,7 @@
     var b = $("#banner");
     b.textContent = text;
     b.classList.remove("hidden");
-    b.style.background = isError ? "#4a1f1f" : "";
-    b.style.borderColor = isError ? "#7c2d2d" : "";
-    b.style.color = isError ? "#ffb3b3" : "";
+    b.classList.toggle("banner-error", !!isError);
     clearTimeout(showBanner._t);
     showBanner._t = setTimeout(function () { b.classList.add("hidden"); }, isError ? 8000 : 5000);
   }
@@ -153,16 +151,17 @@
     var tbody = $("#tbl-projects tbody");
     tbody.textContent = "";
     $("#projects-empty").classList.toggle("hidden", state.projects.length > 0);
+    $("#projects-count").textContent = state.projects.length ? "共 " + state.projects.length + " 个" : "";
 
     state.projects.forEach(function (p) {
       var tr = el("tr");
 
       var nameTd = el("td");
-      nameTd.appendChild(el("div", null, p.name));
+      nameTd.appendChild(el("div", { class: "proj-name" }, p.name));
       nameTd.appendChild(el("div", { class: "slug-line mono" }, p.slug));
       tr.appendChild(nameTd);
 
-      tr.appendChild(el("td", { class: "mono" }, p.root));
+      tr.appendChild(el("td", { class: "mono root-path" }, p.root));
       tr.appendChild(el("td")).appendChild(modeTags(p));
       tr.appendChild(el("td", null, fmtTime(p.createdAt)));
 
@@ -177,7 +176,7 @@
 
       // Token（掩码 + 显示完整 + 复制）
       var tokTd = el("td");
-      var tokSpan = el("span", { class: "mono" }, p.token);
+      var tokSpan = el("span", { class: "mono token-value" }, p.token);
       tokTd.appendChild(tokSpan);
       var eye = el("button", { class: "btn btn-small", title: "显示完整 token" }, "👁");
       var fullToken = null;
@@ -456,6 +455,8 @@
   }
 
   /* ---------- 启动 ---------- */
+
+  $("#endpoint-pill").textContent = location.host;
 
   if (state.token) {
     apiJson("/api/projects").then(showMain).catch(function () { showLogin(); });

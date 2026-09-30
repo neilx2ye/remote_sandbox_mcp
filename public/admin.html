@@ -8,16 +8,26 @@
 </head>
 <body>
 <header class="topbar">
-  <h1>remote-sandbox-mcp 管理台</h1>
-  <button id="btn-logout" class="btn btn-ghost hidden">退出登录</button>
+  <div class="brand">
+    <span class="brand-mark" aria-hidden="true"></span>
+    <div class="brand-text">
+      <h1>remote-sandbox-mcp</h1>
+      <span class="brand-sub">管理台</span>
+    </div>
+  </div>
+  <div class="topbar-actions">
+    <span id="endpoint-pill" class="pill mono" title="当前管理台地址（仅本机/SSH 转发访问）"></span>
+    <button id="btn-logout" class="btn btn-ghost hidden">退出登录</button>
+  </div>
 </header>
 
 <!-- 登录视图 -->
 <section id="view-login" class="login-card">
+  <span class="brand-mark" aria-hidden="true"></span>
   <h2>输入 Admin Token</h2>
-  <p class="muted">启动服务时控制台打印的 <code>MCP_ADMIN_TOKEN</code>，或配置文件中的 <code>adminToken</code>。</p>
+  <p class="muted">使用启动服务时控制台打印的 <code>MCP_ADMIN_TOKEN</code>，或配置文件中的 <code>adminToken</code>。</p>
   <form id="form-login">
-    <input type="password" id="input-token" placeholder="admin token" autocomplete="current-password" required>
+    <input type="password" id="input-token" placeholder="admin token" autocomplete="current-password" aria-label="Admin Token" required>
     <button type="submit" class="btn btn-primary">登录</button>
   </form>
   <p id="login-error" class="error hidden"></p>
@@ -25,11 +35,11 @@
 
 <!-- 主视图 -->
 <main id="view-main" class="hidden">
-  <div id="banner" class="banner hidden"></div>
+  <div id="banner" class="banner hidden" role="status" aria-live="polite"></div>
 
   <div class="toolbar">
-    <h2>项目 / MCP 端点</h2>
-    <div>
+    <h2>项目 / MCP 端点<span id="projects-count" class="count"></span></h2>
+    <div class="toolbar-actions">
       <button id="btn-new" class="btn btn-primary">+ 新建项目</button>
       <button id="btn-refresh" class="btn">刷新</button>
     </div>
@@ -53,37 +63,41 @@
       </div>
       <div class="form-actions">
         <button type="submit" class="btn btn-primary">保存</button>
-        <button type="button" id="btn-cancel-form" class="btn">取消</button>
+        <button type="button" id="btn-cancel-form" class="btn btn-ghost">取消</button>
       </div>
     </form>
   </section>
 
   <!-- 项目表格 -->
   <section class="card">
-    <table class="tbl" id="tbl-projects">
-      <thead>
-        <tr><th>名称 / slug</th><th>根目录</th><th>模式</th><th>创建时间</th><th>MCP 端点</th><th>Token</th><th>操作</th></tr>
-      </thead>
-      <tbody></tbody>
-    </table>
-    <p id="projects-empty" class="muted hidden">暂无项目，点击"新建项目"创建第一个。</p>
+    <div class="tbl-wrap">
+      <table class="tbl" id="tbl-projects">
+        <thead>
+          <tr><th>名称 / slug</th><th>根目录</th><th>模式</th><th>创建时间</th><th>MCP 端点</th><th>Token</th><th>操作</th></tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <p id="projects-empty" class="muted empty-note hidden">暂无项目，点击"新建项目"创建第一个。</p>
   </section>
 
   <!-- 文件浏览 -->
   <section id="panel-browser" class="card hidden">
     <div class="browser-head">
       <h3 id="browser-title">文件浏览</h3>
-      <button id="btn-close-browser" class="btn">关闭</button>
+      <button id="btn-close-browser" class="btn btn-ghost">关闭</button>
     </div>
     <div class="breadcrumb">
       <button id="btn-up" class="btn btn-small">⬆ 返回上级</button>
       <span id="breadcrumb"></span>
     </div>
     <div class="browser-body">
-      <table class="tbl" id="tbl-files">
-        <thead><tr><th>名称</th><th>类型</th><th>大小</th><th>修改时间</th></tr></thead>
-        <tbody></tbody>
-      </table>
+      <div class="tbl-wrap tbl-wrap-scroll">
+        <table class="tbl" id="tbl-files">
+          <thead><tr><th>名称</th><th>类型</th><th>大小</th><th>修改时间</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
       <div id="preview" class="preview hidden">
         <div class="preview-head">
           <span id="preview-name" class="mono"></span>
