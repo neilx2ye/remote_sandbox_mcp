@@ -1,0 +1,15 @@
+{
+  "root": "./sandbox",
+  "host": "127.0.0.1",
+  "port": 8787,
+  "token": "seed-token-for-the-default-project",
+  "adminToken": "change-me-to-a-long-random-string",
+  "maxFileBytes": 5242880,
+  "readOnly": false,
+  "exec": {
+    "enabled": true,
+    "timeoutMs": 30000,
+    "allow": [],
+    "deny": []
+  }
+}

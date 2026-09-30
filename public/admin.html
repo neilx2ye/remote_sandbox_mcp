@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>remote-sandbox-mcp 管理台</title>
+<link rel="stylesheet" href="/admin/admin.css">
+</head>
+<body>
+<header class="topbar">
+  <h1>remote-sandbox-mcp 管理台</h1>
+  <button id="btn-logout" class="btn btn-ghost hidden">退出登录</button>
+</header>
+
+<!-- 登录视图 -->
+<section id="view-login" class="login-card">
+  <h2>输入 Admin Token</h2>
+  <p class="muted">启动服务时控制台打印的 <code>MCP_ADMIN_TOKEN</code>，或配置文件中的 <code>adminToken</code>。</p>
+  <form id="form-login">
+    <input type="password" id="input-token" placeholder="admin token" autocomplete="current-password" required>
+    <button type="submit" class="btn btn-primary">登录</button>
+  </form>
+  <p id="login-error" class="error hidden"></p>
+</section>
+
+<!-- 主视图 -->
+<main id="view-main" class="hidden">
+  <div id="banner" class="banner hidden"></div>
+
+  <div class="toolbar">
+    <h2>项目 / MCP 端点</h2>
+    <div>
+      <button id="btn-new" class="btn btn-primary">+ 新建项目</button>
+      <button id="btn-refresh" class="btn">刷新</button>
+    </div>
+  </div>
+
+  <!-- 新建/编辑表单 -->
+  <section id="panel-form" class="card hidden">
+    <h3 id="form-title">新建项目</h3>
+    <form id="form-project">
+      <div class="form-row">
+        <label>名称 *<input type="text" id="f-name" required maxlength="100" placeholder="例如：我的网站后端"></label>
+        <label>slug（可选，留空自动派生）<input type="text" id="f-slug" pattern="[a-z0-9-]{2,32}" placeholder="my-project"></label>
+      </div>
+      <div class="form-row">
+        <label class="grow">项目根目录 *（设备上任意已存在目录）<input type="text" id="f-root" required placeholder="C:\projects\my-app 或 /home/me/my-app"></label>
+      </div>
+      <div id="root-warning" class="warn hidden">⚠️ 该路径看起来是盘符根目录或系统目录，AI 将能读写其中的所有文件，请确认这是你的本意。</div>
+      <div class="form-row">
+        <label class="check"><input type="checkbox" id="f-readonly"> 只读模式（AI 只能查看，不能修改/执行）</label>
+        <label class="check"><input type="checkbox" id="f-exec" checked> 允许 exec_run 命令执行</label>
+      </div>
+      <div class="form-actions">
+        <button type="submit" class="btn btn-primary">保存</button>
+        <button type="button" id="btn-cancel-form" class="btn">取消</button>
+      </div>
+    </form>
+  </section>
+
+  <!-- 项目表格 -->
+  <section class="card">
+    <table class="tbl" id="tbl-projects">
+      <thead>
+        <tr><th>名称 / slug</th><th>根目录</th><th>模式</th><th>创建时间</th><th>MCP 端点</th><th>Token</th><th>操作</th></tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+    <p id="projects-empty" class="muted hidden">暂无项目，点击"新建项目"创建第一个。</p>
+  </section>
+
+  <!-- 文件浏览 -->
+  <section id="panel-browser" class="card hidden">
+    <div class="browser-head">
+      <h3 id="browser-title">文件浏览</h3>
+      <button id="btn-close-browser" class="btn">关闭</button>
+    </div>
+    <div class="breadcrumb">
+      <button id="btn-up" class="btn btn-small">⬆ 返回上级</button>
+      <span id="breadcrumb"></span>
+    </div>
+    <div class="browser-body">
+      <table class="tbl" id="tbl-files">
+        <thead><tr><th>名称</th><th>类型</th><th>大小</th><th>修改时间</th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <div id="preview" class="preview hidden">
+        <div class="preview-head">
+          <span id="preview-name" class="mono"></span>
+          <button id="btn-close-preview" class="btn btn-small">✕ 关闭预览</button>
+        </div>
+        <div id="preview-content"></div>
+      </div>
+    </div>
+    <p id="files-truncated" class="muted hidden">目录条目过多，仅显示前 2000 条。</p>
+  </section>
+</main>
+
+<script src="/admin/admin.js"></script>
+</body>
+</html>
