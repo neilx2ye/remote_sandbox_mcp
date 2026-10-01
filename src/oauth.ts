@@ -51,9 +51,9 @@ export function pkceChallenge(verifier: string): string {
 
 /**
  * RFC 8707 resource-indicator check. Clients send either the exact project
- * endpoint (`/mcp/<slug>`) or the collection (`/mcp`) derived from the root
- * protected-resource metadata; both are satisfied by a grant on the project.
- * Only the path is compared, since a reverse proxy may shift the origin.
+ * endpoint (`/<slug>`) or the shared `mcp` path; both are satisfied by a grant
+ * on the project. Only the path is compared, since a reverse proxy may shift
+ * the origin.
  */
 export function resourceCoversProject(resource: string | null | undefined, projectSlug: string): boolean {
   if (!resource) return true;
@@ -63,8 +63,8 @@ export function resourceCoversProject(resource: string | null | undefined, proje
   } catch {
     return false;
   }
-  const normalized = pathname.replace(/\/+$/, "");
-  return normalized === "" || normalized === "/mcp" || normalized === `/mcp/${projectSlug}`;
+  const normalized = pathname.replace(/\/+$/, "").toLowerCase();
+  return normalized === "" || normalized === "/mcp" || normalized === `/${projectSlug}`;
 }
 
 function randomToken(prefix: string, bytes = 32): string {
@@ -250,6 +250,22 @@ export class OAuthStore {
     this.tokens = this.tokens.filter((t) => t.clientId !== clientId);
     this.save();
     return true;
+  }
+
+  /**
+   * Follow a project endpoint rename: codes and tokens keep pointing at the
+   * same project, so their stored slug is rewritten instead of being dropped.
+   */
+  renameProjectSlug(oldSlug: string, newSlug: string): void {
+    if (oldSlug === newSlug) return;
+    let changed = false;
+    for (const rec of [...this.codes, ...this.tokens]) {
+      if (rec.projectSlug === oldSlug) {
+        rec.projectSlug = newSlug;
+        changed = true;
+      }
+    }
+    if (changed) this.save();
   }
 
   /* ---------- authorization codes ---------- */

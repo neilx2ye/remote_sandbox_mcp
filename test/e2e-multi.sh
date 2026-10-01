@@ -42,6 +42,7 @@ check "api without admin token -> 401" "401" "$CODE"
 
 OUT=$(curl -s "$BASE/api/projects" "${ADMIN_H[@]}")
 check "seeded default project listed" '"slug":"default"' "$OUT"
+check "seeded project is the /mcp alias" '"isDefault":true' "$OUT"
 check "list masks token" '****' "$OUT"
 
 echo "--- 2. create projects A & B ---"
@@ -52,7 +53,7 @@ SLUG_A=$(echo "$OUT" | grep -o '"slug":"[^"]*"' | head -1 | cut -d'"' -f4)
 TOKEN_A=$(echo "$OUT" | grep -o '"token":"[^"]*"' | head -1 | cut -d'"' -f4)
 ID_A=$(echo "$OUT" | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
 check "slug A derived" 'project-alpha' "$SLUG_A"
-check "mcpPath present" '/mcp/project-alpha' "$OUT"
+check "mcpPath is the project's own /<slug>" '"mcpPath":"/project-alpha"' "$OUT"
 
 OUT=$(curl -s -X POST "$BASE/api/projects" "${ADMIN_H[@]}" \
   -d "{\"name\":\"Project Beta\",\"slug\":\"proj-b\",\"root\":\"$WROOT_B\"}")
@@ -64,20 +65,20 @@ echo "--- 3. MCP sessions per project ---"
 INIT='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"e2e","version":"1.0"}}}'
 HEADERS_FILE="$WORK/h.txt"
 
-init_session() { # slug token -> echoes session id
-  curl -s -D "$HEADERS_FILE" -X POST "$BASE/mcp/$1" \
+init_session() { # endpoint-path token -> echoes session id
+  curl -s -D "$HEADERS_FILE" -X POST "$BASE$1" \
     -H "Authorization: Bearer $2" -H "Content-Type: application/json" \
     -H "Accept: application/json, text/event-stream" -d "$INIT" > /dev/null
   grep -i '^mcp-session-id:' "$HEADERS_FILE" | tr -d '\r' | awk '{print $2}'
 }
 
-SID_A=$(init_session "$SLUG_A" "$TOKEN_A")
-SID_B=$(init_session "proj-b" "$TOKEN_B")
+SID_A=$(init_session "/$SLUG_A" "$TOKEN_A")
+SID_B=$(init_session "/proj-b" "$TOKEN_B")
 [ -n "$SID_A" ] && PASS=$((PASS+1)) && echo "PASS  session A" || { FAIL=$((FAIL+1)); echo "FAIL  session A"; }
 [ -n "$SID_B" ] && PASS=$((PASS+1)) && echo "PASS  session B" || { FAIL=$((FAIL+1)); echo "FAIL  session B"; }
 
-call() { # sid token slug id name args
-  local mcp_path="/mcp"; [ -n "$3" ] && mcp_path="/mcp/$3"
+call() { # sid token slug id name args  (empty slug = the shared /mcp alias)
+  local mcp_path="/mcp"; [ -n "$3" ] && mcp_path="/$3"
   curl -s -X POST "$BASE$mcp_path" \
     -H "Authorization: Bearer $2" -H "Content-Type: application/json" \
     -H "Accept: application/json, text/event-stream" -H "mcp-session-id: $1" \
@@ -92,7 +93,7 @@ OUT=$(call "$SID_B" "$TOKEN_B" "proj-b" 12 fs_write '{"path":"b.txt","content":"
 check "B: fs_write" 'Wrote' "$OUT"
 
 echo "--- 4. isolation ---"
-CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BASE/mcp/proj-b" \
+CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BASE/proj-b" \
   -H "Authorization: Bearer $TOKEN_A" -H "Content-Type: application/json" \
   -H "Accept: application/json, text/event-stream" -d "$INIT")
 check "cross token A->B -> 401" "401" "$CODE"
@@ -102,25 +103,27 @@ check "A cannot read B's root (abs path)" 'escapes sandbox' "$OUT"
 OUT=$(call "$SID_A" "$TOKEN_A" "$SLUG_A" 14 fs_read '{"path":"../root-b/b-only.txt"}')
 check "A cannot escape via .." 'escapes sandbox' "$OUT"
 
-CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BASE/mcp/proj-b" \
+CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BASE/proj-b" \
   -H "Authorization: Bearer $TOKEN_B" -H "Content-Type: application/json" \
   -H "Accept: application/json, text/event-stream" -H "mcp-session-id: $SID_A" \
   -d '{"jsonrpc":"2.0","id":15,"method":"tools/list","params":{}}')
 check "session A reused on slug B -> 403" "403" "$CODE"
 
-CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BASE/mcp/no-such" \
+CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BASE/no-such" \
   -H "Authorization: Bearer $TOKEN_A" -H "Content-Type: application/json" \
   -H "Accept: application/json, text/event-stream" -d "$INIT")
 check "unknown slug -> 404" "404" "$CODE"
 
-echo "--- 5. backward compat: /mcp = default ---"
-SID_D=$(init_session "" "$SEED_TOKEN")
-# /mcp (no slug) -> default project
-SID_D=$(curl -s -D "$HEADERS_FILE" -X POST "$BASE/mcp" \
-  -H "Authorization: Bearer $SEED_TOKEN" -H "Content-Type: application/json" \
-  -H "Accept: application/json, text/event-stream" -d "$INIT" > /dev/null; \
-  grep -i '^mcp-session-id:' "$HEADERS_FILE" | tr -d '\r' | awk '{print $2}')
-[ -n "$SID_D" ] && PASS=$((PASS+1)) && echo "PASS  /mcp default with seed token" || { FAIL=$((FAIL+1)); echo "FAIL  /mcp default with seed token"; }
+# The old /mcp/<slug> shape is gone and points callers at /<slug>.
+CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BASE/mcp/proj-b" \
+  -H "Authorization: Bearer $TOKEN_B" -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" -d "$INIT")
+check "legacy /mcp/<slug> -> 404" "404" "$CODE"
+
+echo "--- 5. backward compat: /mcp = assigned project ---"
+# /mcp (no slug) -> the project assigned to the shared path (the seeded default)
+SID_D=$(init_session "/mcp" "$SEED_TOKEN")
+[ -n "$SID_D" ] && PASS=$((PASS+1)) && echo "PASS  /mcp assigned project with seed token" || { FAIL=$((FAIL+1)); echo "FAIL  /mcp assigned project with seed token"; }
 OUT=$(call "$SID_D" "$SEED_TOKEN" "" 16 sys_info '{}')
 check "default sys_info slug" 'default' "$OUT"
 

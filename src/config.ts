@@ -56,7 +56,7 @@ export interface AppConfig {
   maxFileBytes: number;
   /** Master switch: forces every project read-only. */
   readOnly: boolean;
-  /** How /mcp endpoints authenticate callers (see McpAuthMode). */
+  /** How the MCP endpoints authenticate callers (see McpAuthMode). */
   auth: McpAuthMode;
   stdio: boolean;
   /** Global exec defaults; exec.enabled=false is a master switch for all projects. */
@@ -166,7 +166,7 @@ Options:
   --admin-token <t>   Admin console / API token (default: random, printed at startup)
   --public-url <url>  Public origin used in OAuth metadata, e.g. https://mcp.example.com
                       (default: derived from Host / X-Forwarded-* headers)
-  --auth <mode>       How /mcp endpoints authenticate: any | token | none (default any)
+  --auth <mode>       How the MCP endpoints authenticate: any | token | none (default any)
                       any = project token or OAuth; token = project token only;
                       none = no authentication (only safe behind loopback/SSH forward)
   --stdio             Serve MCP over stdio (uses the "default" project) instead of HTTP
@@ -178,7 +178,8 @@ Options:
 Environment: MCP_ROOT, MCP_PORT, MCP_HOST, MCP_TOKEN, MCP_ADMIN_TOKEN, MCP_PUBLIC_URL, MCP_AUTH
 Priority: CLI args > env > config file > defaults
 
-MCP endpoints: /mcp (default project) and /mcp/<slug> per project.
+MCP endpoints: every project answers on its own /<slug>; /mcp serves whichever
+project the admin console assigns to it (assignable at any time).
 OAuth (connector authorization): /.well-known/*, /oauth/* - only served when --auth any.
 Admin console: /admin (use only via local access or SSH port-forward).
 `);

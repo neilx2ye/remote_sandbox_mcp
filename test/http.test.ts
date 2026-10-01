@@ -101,7 +101,7 @@ afterAll(async () => {
 
 describe("MCP multi-project endpoints", () => {
   it("initializes with the project's own token", async () => {
-    const res = await mcpInitialize("/mcp/slug-a", tokenA);
+    const res = await mcpInitialize("/slug-a", tokenA);
     expect(res.status).toBe(200);
     const text = await res.text();
     expect(text).toContain("remote-sandbox-mcp");
@@ -109,28 +109,31 @@ describe("MCP multi-project endpoints", () => {
   });
 
   it("rejects cross-project tokens with 401", async () => {
-    const res = await mcpInitialize("/mcp/slug-a", tokenB);
+    const res = await mcpInitialize("/slug-a", tokenB);
     expect(res.status).toBe(401);
   });
 
   it("returns 404 for unknown slugs", async () => {
-    const res = await mcpInitialize("/mcp/no-such-slug", tokenA);
+    const res = await mcpInitialize("/no-such-slug", tokenA);
     expect(res.status).toBe(404);
+    const body = await res.json();
+    expect(body.error.code).toBe(-32004);
+    expect(body.error.message).toBe("Unknown project: no-such-slug");
   });
 
   it("returns 403 when a session is reused across slugs", async () => {
-    const res = await mcpInitialize("/mcp/slug-a", tokenA);
+    const res = await mcpInitialize("/slug-a", tokenA);
     const sid = res.headers.get("mcp-session-id")!;
     await res.text();
     // Same session id against slug-b (even with slug-b's own token) must fail.
-    const cross = await fetch(`${base}/mcp/slug-b`, {
+    const cross = await fetch(`${base}/slug-b`, {
       method: "POST",
       headers: mcpHeaders(tokenB, sid),
       body: JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} }),
     });
     expect(cross.status).toBe(403);
     // And the session still works on its own slug.
-    const ok = await fetch(`${base}/mcp/slug-a`, {
+    const ok = await fetch(`${base}/slug-a`, {
       method: "POST",
       headers: mcpHeaders(tokenA, sid),
       body: JSON.stringify({ jsonrpc: "2.0", id: 3, method: "tools/list", params: {} }),
@@ -139,10 +142,10 @@ describe("MCP multi-project endpoints", () => {
   });
 
   it("readOnly project hides write tools", async () => {
-    const res = await mcpInitialize("/mcp/slug-b", tokenB);
+    const res = await mcpInitialize("/slug-b", tokenB);
     const sid = res.headers.get("mcp-session-id")!;
     await res.text();
-    const list = await fetch(`${base}/mcp/slug-b`, {
+    const list = await fetch(`${base}/slug-b`, {
       method: "POST",
       headers: mcpHeaders(tokenB, sid),
       body: JSON.stringify({ jsonrpc: "2.0", id: 4, method: "tools/list", params: {} }),
@@ -170,7 +173,7 @@ describe("admin API", () => {
     const a = data.projects.find((p: { slug: string }) => p.slug === "slug-a");
     expect(a.token).toMatch(/^.{4}\*{4}.{4}$/);
     expect(a.token).not.toBe(tokenA);
-    expect(a.mcpPath).toBe("/mcp/slug-a");
+    expect(a.mcpPath).toBe("/slug-a");
   });
 
   it("creates a project and returns the full token once", async () => {
@@ -300,5 +303,198 @@ describe("admin static assets", () => {
     const res = await fetch(`${base}/health`);
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true });
+  });
+});
+
+describe("bare /mcp endpoint (designated project)", () => {
+  it("404s while no project is designated and no 'default' project exists", async () => {
+    const res = await mcpInitialize("/mcp", tokenA);
+    expect(res.status).toBe(404);
+    const body = await res.json();
+    expect(body.error.code).toBe(-32004);
+    expect(body.error.message).toContain("No project is assigned to /mcp");
+  });
+
+  it("serves the designated project and reports it in the admin API", async () => {
+    const set = await fetch(`${base}/api/projects/${idA}/set-default`, { method: "POST", headers: adminHeaders() });
+    expect(set.status).toBe(200);
+    const setData = await set.json();
+    expect(setData.project.isDefault).toBe(true);
+    // mcpPath is the project's own endpoint; isDefault marks the /mcp alias.
+    expect(setData.project.mcpPath).toBe("/slug-a");
+
+    const list = await (await fetch(`${base}/api/projects`, { headers: adminHeaders() })).json();
+    const a = list.projects.find((p: { slug: string }) => p.slug === "slug-a");
+    const b = list.projects.find((p: { slug: string }) => p.slug === "slug-b");
+    expect(a.isDefault).toBe(true);
+    expect(a.mcpPath).toBe("/slug-a");
+    expect(b.isDefault).toBe(false);
+    expect(b.mcpPath).toBe("/slug-b");
+
+    // /mcp now serves slug-a: its token works, another project's does not...
+    expect((await mcpInitialize("/mcp", tokenA)).status).toBe(200);
+    expect((await mcpInitialize("/mcp", tokenB)).status).toBe(401);
+    // ...and the canonical /slug-a path keeps working.
+    expect((await mcpInitialize("/slug-a", tokenA)).status).toBe(200);
+  });
+
+  it("treats /mcp and /<slug> as the same session", async () => {
+    const init = await mcpInitialize("/mcp", tokenA);
+    const sid = init.headers.get("mcp-session-id")!;
+    await init.text();
+    const res = await fetch(`${base}/slug-a`, {
+      method: "POST",
+      headers: mcpHeaders(tokenA, sid),
+      body: JSON.stringify({ jsonrpc: "2.0", id: 9, method: "tools/list", params: {} }),
+    });
+    expect(res.status).toBe(200);
+  });
+
+  it("rejects set-default for an unknown project", async () => {
+    const res = await fetch(`${base}/api/projects/no-such-id/set-default`, { method: "POST", headers: adminHeaders() });
+    expect(res.status).toBe(404);
+  });
+
+  it("moves /mcp to another project and back to none when that project is deleted", async () => {
+    const rootC = path.join(tmp, "root-designated");
+    fs.mkdirSync(rootC, { recursive: true });
+    const created = await (
+      await fetch(`${base}/api/projects`, {
+        method: "POST",
+        headers: adminHeaders(),
+        body: JSON.stringify({ name: "Designated", root: rootC }),
+      })
+    ).json();
+    const { id, token } = created.project as { id: string; token: string };
+
+    const set = await fetch(`${base}/api/projects/${id}/set-default`, { method: "POST", headers: adminHeaders() });
+    expect(set.status).toBe(200);
+    expect((await mcpInitialize("/mcp", token)).status).toBe(200);
+    expect((await mcpInitialize("/mcp", tokenA)).status).toBe(401);
+
+    const del = await fetch(`${base}/api/projects/${id}`, { method: "DELETE", headers: adminHeaders() });
+    expect(del.status).toBe(200);
+    // No 'default' project exists here, so bare /mcp goes back to 404.
+    expect((await mcpInitialize("/mcp", tokenA)).status).toBe(404);
+  });
+
+  it("binds a project created with slug '/mcp' to the bare endpoint", async () => {
+    const rootD = path.join(tmp, "root-slug-mcp");
+    fs.mkdirSync(rootD, { recursive: true });
+    const res = await fetch(`${base}/api/projects`, {
+      method: "POST",
+      headers: adminHeaders(),
+      body: JSON.stringify({ name: "Bound", root: rootD, slug: "/mcp" }),
+    });
+    expect(res.status).toBe(201);
+    const created = await res.json();
+    expect(created.project.slug).toBe("bound");
+    expect(created.project.isDefault).toBe(true);
+    // Every project's mcpPath is its own /<slug>; isDefault records the /mcp alias.
+    expect(created.project.mcpPath).toBe("/bound");
+
+    expect((await mcpInitialize("/mcp", created.project.token)).status).toBe(200);
+    expect((await mcpInitialize("/bound", created.project.token)).status).toBe(200);
+    expect((await mcpInitialize("/mcp", tokenA)).status).toBe(401);
+  });
+});
+
+describe("project endpoint rename (PATCH slug)", () => {
+  it("moves the endpoint and keeps serving the live session", async () => {
+    const rootE = path.join(tmp, "root-rename");
+    fs.mkdirSync(rootE, { recursive: true });
+    const created = await (
+      await fetch(`${base}/api/projects`, {
+        method: "POST",
+        headers: adminHeaders(),
+        body: JSON.stringify({ name: "Rename Me", root: rootE }),
+      })
+    ).json();
+    const { id, token } = created.project as { id: string; token: string };
+    expect(created.project.slug).toBe("rename-me");
+    expect(created.project.mcpPath).toBe("/rename-me");
+
+    // The project's own path serves it, and a session is fenced by project id.
+    const init = await mcpInitialize("/rename-me", token);
+    expect(init.status).toBe(200);
+    const sid = init.headers.get("mcp-session-id")!;
+    await init.text();
+
+    const patch = await fetch(`${base}/api/projects/${id}`, {
+      method: "PATCH",
+      headers: adminHeaders(),
+      body: JSON.stringify({ slug: "renamed-x" }),
+    });
+    expect(patch.status).toBe(200);
+    const patched = await patch.json();
+    expect(patched.project.slug).toBe("renamed-x");
+    expect(patched.project.mcpPath).toBe("/renamed-x");
+
+    // The old path is gone; the new one serves the same token.
+    expect((await mcpInitialize("/rename-me", token)).status).toBe(404);
+    expect((await mcpInitialize("/renamed-x", token)).status).toBe(200);
+    // The live session follows the rename instead of being invalidated.
+    const carried = await fetch(`${base}/renamed-x`, {
+      method: "POST",
+      headers: mcpHeaders(token, sid),
+      body: JSON.stringify({ jsonrpc: "2.0", id: 20, method: "tools/list", params: {} }),
+    });
+    expect(carried.status).toBe(200);
+    await carried.text();
+
+    await fetch(`${base}/api/projects/${id}`, { method: "DELETE", headers: adminHeaders() });
+  });
+
+  it("404s the legacy /mcp/<slug> shape with a hint at the new path", async () => {
+    const res = await mcpInitialize("/mcp/slug-a", tokenA);
+    expect(res.status).toBe(404);
+    const body = await res.json();
+    expect(body.error.code).toBe(-32004);
+    expect(body.error.message).toContain("endpoints now live at /<slug>");
+    expect(body.error.message).toContain("/slug-a");
+    expect(body.error.message).toContain("the shared, assignable path is /mcp");
+  });
+
+  it("rejects a reserved or colliding slug on PATCH", async () => {
+    const rootF = path.join(tmp, "root-patch-bad");
+    fs.mkdirSync(rootF, { recursive: true });
+    const created = await (
+      await fetch(`${base}/api/projects`, {
+        method: "POST",
+        headers: adminHeaders(),
+        body: JSON.stringify({ name: "Patch Bad", root: rootF }),
+      })
+    ).json();
+    const id = created.project.id as string;
+
+    for (const reserved of ["admin", "oauth"]) {
+      const res = await fetch(`${base}/api/projects/${id}`, {
+        method: "PATCH",
+        headers: adminHeaders(),
+        body: JSON.stringify({ slug: reserved }),
+      });
+      expect(res.status).toBe(400);
+    }
+    const colliding = await fetch(`${base}/api/projects/${id}`, {
+      method: "PATCH",
+      headers: adminHeaders(),
+      body: JSON.stringify({ slug: "slug-a" }),
+    });
+    expect(colliding.status).toBe(409);
+
+    // slug "mcp" is an assignment request, not a rename: the endpoint stays.
+    const assign = await fetch(`${base}/api/projects/${id}`, {
+      method: "PATCH",
+      headers: adminHeaders(),
+      body: JSON.stringify({ slug: "mcp" }),
+    });
+    expect(assign.status).toBe(200);
+    const assigned = await assign.json();
+    expect(assigned.project.slug).toBe("patch-bad");
+    expect(assigned.project.mcpPath).toBe("/patch-bad");
+    expect(assigned.project.isDefault).toBe(true);
+    expect((await mcpInitialize("/mcp", created.project.token)).status).toBe(200);
+
+    await fetch(`${base}/api/projects/${id}`, { method: "DELETE", headers: adminHeaders() });
   });
 });

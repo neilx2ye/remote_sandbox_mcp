@@ -15,7 +15,7 @@ function printBanner(lines: string[]): void {
 }
 
 function pickStdioProject(store: ProjectsStore) {
-  return store.getBySlug("default") ?? store.list()[0] ?? null;
+  return store.getDefault() ?? store.list()[0] ?? null;
 }
 
 async function main(): Promise<void> {
@@ -78,8 +78,13 @@ async function main(): Promise<void> {
     ``,
     `MCP endpoints:`,
   ];
+  const defaultProject = store.getDefault();
   for (const p of store.list()) {
-    banner.push(`  /mcp/${p.slug}  ->  ${p.root}${p.readOnly ? "  [read-only]" : ""}${p.execEnabled ? "" : "  [exec off]"}`);
+    const endpoint = defaultProject?.id === p.id ? `/${p.slug} + /mcp` : `/${p.slug}`;
+    banner.push(`  ${endpoint}  ->  ${p.root}${p.readOnly ? "  [read-only]" : ""}${p.execEnabled ? "" : "  [exec off]"}`);
+  }
+  if (!defaultProject) {
+    banner.push(`  (/mcp is unassigned - pick a project for it in the admin console)`);
   }
   banner.push(
     ``,
@@ -94,10 +99,10 @@ async function main(): Promise<void> {
     banner.push(
       ``,
       `OAuth (connector authorization, pick the project on the consent page):`,
-      `  discovery    : /.well-known/oauth-protected-resource[/mcp/<slug>]  and  /.well-known/oauth-authorization-server`,
+      `  discovery    : /.well-known/oauth-protected-resource[/<slug>]  and  /.well-known/oauth-authorization-server`,
       `  authorize    : /oauth/authorize   (open in a browser, log in with the admin token)`,
       `  public origin: ${config.publicUrl ?? "(derived per request from Host / X-Forwarded-*)"}`,
-      `  NOTE: a public tunnel must expose /.well-known/* and /oauth/* as well as /mcp*.`,
+      `  NOTE: a public tunnel must expose /.well-known/* and /oauth/* as well as the MCP endpoints.`,
     );
   } else {
     banner.push(``, `OAuth endpoints are disabled (--auth ${config.auth}); use the admin console or /api.`);
@@ -121,14 +126,14 @@ async function main(): Promise<void> {
   if (config.auth === "none") {
     banner.push(
       ``,
-      `DANGER: auth mode "none" serves /mcp* with NO authentication. Anyone who can reach this`,
-      `port gets full read/write/exec access to every project root. Keep the listener on`,
+      `DANGER: auth mode "none" serves every MCP endpoint with NO authentication. Anyone who can reach`,
+      `this port gets full read/write/exec access to every project root. Keep the listener on`,
       `127.0.0.1 (currently bound to ${config.host}) and never put it on a public tunnel.`,
     );
   } else {
     banner.push(
       ``,
-      `WARNING: keep /admin and /api OFF public tunnels - expose only /mcp*` +
+      `WARNING: keep /admin and /api OFF public tunnels - expose only the MCP endpoints (/<slug>, /mcp)` +
         (config.auth === "any" ? ` (+ /.well-known/*, /oauth/* when using OAuth)` : ``),
     );
   }

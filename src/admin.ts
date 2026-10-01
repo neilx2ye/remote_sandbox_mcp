@@ -26,7 +26,7 @@ export function sendJson(res: http.ServerResponse, status: number, body: unknown
   res.end(text);
 }
 
-function publicProject(p: Project, fullToken: boolean): Record<string, unknown> {
+function publicProject(p: Project, fullToken: boolean, isDefault: boolean): Record<string, unknown> {
   return {
     id: p.id,
     slug: p.slug,
@@ -36,7 +36,9 @@ function publicProject(p: Project, fullToken: boolean): Record<string, unknown> 
     execEnabled: p.execEnabled,
     createdAt: p.createdAt,
     token: fullToken ? p.token : maskToken(p.token),
-    mcpPath: `/mcp/${p.slug}`,
+    // The project's own endpoint; `isDefault` also answers on the shared /mcp path.
+    mcpPath: `/${p.slug}`,
+    isDefault,
   };
 }
 
@@ -158,6 +160,8 @@ export async function handleAdminApi(
 ): Promise<void> {
   const seg = url.pathname.split("/").filter(Boolean); // ["api", "projects", id?, action?]
   const method = req.method ?? "GET";
+  const pub = (p: Project, fullToken: boolean): Record<string, unknown> =>
+    publicProject(p, fullToken, store.getDefault()?.id === p.id);
 
   try {
     // /api/status — how the MCP endpoints currently authenticate; the console
@@ -199,7 +203,7 @@ export async function handleAdminApi(
     // /api/projects
     if (seg.length === 2) {
       if (method === "GET") {
-        sendJson(res, 200, { projects: store.list().map((p) => publicProject(p, false)) });
+        sendJson(res, 200, { projects: store.list().map((p) => pub(p, false)) });
         return;
       }
       if (method === "POST") {
@@ -217,7 +221,7 @@ export async function handleAdminApi(
           execEnabled: body.execEnabled === undefined ? undefined : Boolean(body.execEnabled),
         });
         // The full token is returned only here (and via detail/regenerate).
-        sendJson(res, 201, { project: publicProject(project, true) });
+        sendJson(res, 201, { project: pub(project, true) });
         return;
       }
       sendJson(res, 405, { error: "method not allowed" });
@@ -244,7 +248,7 @@ export async function handleAdminApi(
       if (method === "GET") {
         const project = store.get(id);
         if (!project) throw new StoreError(404, `project not found: ${id}`);
-        sendJson(res, 200, { project: publicProject(project, true) });
+        sendJson(res, 200, { project: pub(project, true) });
         return;
       }
       if (method === "PATCH") {
@@ -254,13 +258,19 @@ export async function handleAdminApi(
         } catch {
           throw new StoreError(400, "request body must be valid JSON");
         }
+        const before = store.get(id);
+        if (!before) throw new StoreError(404, `project not found: ${id}`);
         const project = store.update(id, {
           name: body.name === undefined ? undefined : (body.name as string),
+          slug: body.slug === undefined ? undefined : (body.slug as string),
           root: body.root === undefined ? undefined : (body.root as string),
           readOnly: body.readOnly === undefined ? undefined : Boolean(body.readOnly),
           execEnabled: body.execEnabled === undefined ? undefined : Boolean(body.execEnabled),
         });
-        sendJson(res, 200, { project: publicProject(project, false) });
+        // OAuth grants are bound to the endpoint slug; follow a rename instead of
+        // silently invalidating every token issued to this project.
+        if (project.slug !== before.slug) oauth.renameProjectSlug(before.slug, project.slug);
+        sendJson(res, 200, { project: pub(project, false) });
         return;
       }
       if (method === "DELETE") {
@@ -275,7 +285,14 @@ export async function handleAdminApi(
     // /api/projects/:id/regenerate-token
     if (seg.length === 4 && seg[3] === "regenerate-token" && method === "POST") {
       const project = store.regenerateToken(id);
-      sendJson(res, 200, { project: publicProject(project, true) });
+      sendJson(res, 200, { project: pub(project, true) });
+      return;
+    }
+
+    // /api/projects/:id/set-default → also serve this project at the shared /mcp path.
+    if (seg.length === 4 && seg[3] === "set-default" && method === "POST") {
+      const project = store.setDefault(id);
+      sendJson(res, 200, { project: pub(project, false) });
       return;
     }
 

@@ -119,7 +119,7 @@ describe("auth mode parsing", () => {
 describe('auth mode "none"', () => {
   it("accepts MCP requests without any credentials", async () => {
     const h = await startServer("none");
-    const res = await fetch(`${h.base}/mcp/slug-a`, { method: "POST", headers: mcpHeaders(), body: INIT_BODY });
+    const res = await fetch(`${h.base}/slug-a`, { method: "POST", headers: mcpHeaders(), body: INIT_BODY });
     expect(res.status).toBe(200);
     expect(res.headers.get("mcp-session-id")).toBeTruthy();
     expect(res.headers.get("www-authenticate")).toBeNull();
@@ -128,10 +128,10 @@ describe('auth mode "none"', () => {
 
   it("serves a full tool session for an anonymous caller", async () => {
     const h = await startServer("none");
-    const init = await fetch(`${h.base}/mcp/slug-a`, { method: "POST", headers: mcpHeaders(), body: INIT_BODY });
+    const init = await fetch(`${h.base}/slug-a`, { method: "POST", headers: mcpHeaders(), body: INIT_BODY });
     const sid = init.headers.get("mcp-session-id")!;
     await init.text();
-    const call = await fetch(`${h.base}/mcp/slug-a`, {
+    const call = await fetch(`${h.base}/slug-a`, {
       method: "POST",
       headers: { ...mcpHeaders(), "mcp-session-id": sid },
       body: JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "fs_read", arguments: { path: "note.txt" } } }),
@@ -143,7 +143,7 @@ describe('auth mode "none"', () => {
   it("does not serve the OAuth endpoints", async () => {
     const h = await startServer("none");
     expect((await fetch(`${h.base}/.well-known/oauth-authorization-server`)).status).toBe(404);
-    expect((await fetch(`${h.base}/.well-known/oauth-protected-resource/mcp/slug-a`)).status).toBe(404);
+    expect((await fetch(`${h.base}/.well-known/oauth-protected-resource/slug-a`)).status).toBe(404);
     expect(
       (await fetch(`${h.base}/oauth/token`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" })).status,
     ).toBe(404);
@@ -162,10 +162,10 @@ describe('auth mode "none"', () => {
 describe('auth mode "token"', () => {
   it("still requires the project token", async () => {
     const h = await startServer("token");
-    expect((await fetch(`${h.base}/mcp/slug-a`, { method: "POST", headers: mcpHeaders(), body: INIT_BODY })).status).toBe(401);
+    expect((await fetch(`${h.base}/slug-a`, { method: "POST", headers: mcpHeaders(), body: INIT_BODY })).status).toBe(401);
     // A cross-project token is not a project token either.
-    expect((await fetch(`${h.base}/mcp/slug-a`, { method: "POST", headers: mcpHeaders("wrong"), body: INIT_BODY })).status).toBe(401);
-    expect((await fetch(`${h.base}/mcp/slug-a`, { method: "POST", headers: mcpHeaders(h.token), body: INIT_BODY })).status).toBe(200);
+    expect((await fetch(`${h.base}/slug-a`, { method: "POST", headers: mcpHeaders("wrong"), body: INIT_BODY })).status).toBe(401);
+    expect((await fetch(`${h.base}/slug-a`, { method: "POST", headers: mcpHeaders(h.token), body: INIT_BODY })).status).toBe(200);
   });
 
   it("does not serve the OAuth endpoints", async () => {
@@ -189,9 +189,9 @@ describe('auth mode "any" (default)', () => {
 
   it("challenges unauthenticated MCP requests with a metadata pointer", async () => {
     const h = await startServer("any");
-    const res = await fetch(`${h.base}/mcp/slug-a`, { method: "POST", headers: mcpHeaders(), body: INIT_BODY });
+    const res = await fetch(`${h.base}/slug-a`, { method: "POST", headers: mcpHeaders(), body: INIT_BODY });
     expect(res.status).toBe(401);
-    expect(res.headers.get("www-authenticate")).toContain("/.well-known/oauth-protected-resource/mcp/slug-a");
+    expect(res.headers.get("www-authenticate")).toContain("/.well-known/oauth-protected-resource/slug-a");
   });
 
   it("lists no OAuth clients when the console asks in a non-any mode", async () => {

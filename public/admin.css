@@ -283,17 +283,14 @@ main { max-width: 1400px; margin: 0 auto; padding: 24px 22px 72px; }
 .tbl td.actions .btn { margin-right: 6px; margin-bottom: 4px; }
 
 /* 项目表格：固定列宽，长路径按列宽折行而不是被挤成竖排 */
-#tbl-projects { table-layout: fixed; min-width: 1260px; }
-#tbl-projects th:nth-child(1) { width: 9%; }
-#tbl-projects th:nth-child(2) { width: 16%; }
-#tbl-projects th:nth-child(3) { width: 11%; }
-#tbl-projects th:nth-child(4) { width: 12%; }
-#tbl-projects th:nth-child(5) { width: 13.5%; }
-#tbl-projects th:nth-child(6) { width: 16.5%; }
-#tbl-projects th:nth-child(7) { width: 22%; }
-#tbl-projects td:nth-child(3),
-#tbl-projects td:nth-child(4) { white-space: nowrap; }
-#tbl-projects td:nth-child(4) { font-variant-numeric: tabular-nums; }
+#tbl-projects { table-layout: fixed; min-width: 860px; }
+#tbl-projects th:nth-child(1) { width: 16%; }
+#tbl-projects th:nth-child(2) { width: 26%; }
+#tbl-projects th:nth-child(3) { width: 12%; }
+#tbl-projects th:nth-child(4) { width: 16%; }
+#tbl-projects th:nth-child(5) { width: 30%; }
+#tbl-projects td:nth-child(3) { white-space: nowrap; }
+#tbl-projects td.actions { white-space: normal; }
 #tbl-files { min-width: 560px; }
 #tbl-files th:nth-child(3),
 #tbl-files td:nth-child(3) { text-align: right; }
@@ -303,15 +300,14 @@ main { max-width: 1400px; margin: 0 auto; padding: 24px 22px 72px; }
 .proj-name { margin-bottom: 3px; color: var(--text); font-size: 0.9rem; font-weight: 600; }
 .slug-line { color: var(--muted); font-size: 0.75rem; letter-spacing: 0.02em; }
 .root-path { color: var(--text-dim); word-break: break-all; }
-.token-value {
-  padding: 2px 8px; border-radius: 6px;
-  background: var(--panel-3); border: 1px solid var(--border);
-  color: var(--text-dim); font-size: 0.78rem; word-break: break-all;
-}
 .mcp-path {
   padding: 2px 8px; border-radius: 6px;
   background: var(--accent-soft); border: 1px solid var(--accent-line);
   color: #a9c6ff; font-family: var(--mono); font-size: 0.79rem; white-space: nowrap;
+}
+.mcp-paths { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.mcp-path.alias {
+  background: var(--panel-3); border-color: var(--border); color: var(--text-dim);
 }
 
 .tag {
@@ -327,6 +323,7 @@ main { max-width: 1400px; margin: 0 auto; padding: 24px 22px 72px; }
 }
 .tag.ro { background: var(--warn-soft); border-color: rgba(240, 180, 41, 0.32); color: #ffd479; }
 .tag.exec { background: var(--ok-soft); border-color: rgba(63, 191, 127, 0.32); color: #7ee2ae; }
+.tag.default { background: var(--accent-soft); border-color: var(--accent-line); color: #a9c6ff; }
 
 .empty-note { padding: 26px 0; text-align: center; font-size: 0.85rem; }
 

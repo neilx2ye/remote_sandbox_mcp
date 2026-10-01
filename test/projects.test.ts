@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  isMcpEndpointSlug,
   isValidSlug,
   maskToken,
   ProjectsStore,
@@ -16,6 +17,17 @@ function newStore(): { dir: string; store: ProjectsStore; file: string } {
   const dir = makeTempDir();
   const file = path.join(dir, "data", "projects.json");
   return { dir, store: new ProjectsStore(file), file };
+}
+
+/** Run `fn` and return the StoreError it threw; fail if it threw nothing. */
+function storeError(fn: () => unknown): StoreError {
+  try {
+    fn();
+  } catch (e) {
+    if (e instanceof StoreError) return e;
+    throw e;
+  }
+  throw new Error("expected a StoreError, but the call succeeded");
 }
 
 describe("ProjectsStore", () => {
@@ -51,7 +63,8 @@ describe("ProjectsStore", () => {
     const { dir, store } = newStore();
     try {
       expect(slugify("My Cool Project!")).toBe("my-cool-project");
-      expect(slugify("中文 项目")).toBe("project"); // non-ASCII falls back
+      // Names with no usable ASCII fall back to a random "proj-<4 hex>" stem.
+      expect(slugify("中文 项目")).toMatch(/^proj-[0-9a-f]{4}$/);
       const a = store.create({ name: "Dup", root: dir });
       const b = store.create({ name: "Dup", root: dir });
       const c = store.create({ name: "Dup", root: dir });
@@ -67,17 +80,25 @@ describe("ProjectsStore", () => {
       expect(isValidSlug("ok-slug-1")).toBe(true);
       expect(isValidSlug("a")).toBe(false);
       expect(isValidSlug("Upper")).toBe(false);
-      expect(isValidSlug("admin")).toBe(false);
-      expect(isValidSlug("api")).toBe(false);
-      expect(isValidSlug("health")).toBe(false);
-      expect(isValidSlug("mcp")).toBe(false);
+      for (const reserved of ["admin", "api", "health", "mcp", "oauth"]) {
+        expect(isValidSlug(reserved)).toBe(false);
+      }
 
-      expect(() => store.create({ name: "x", slug: "admin", root: dir })).toThrow(StoreError);
-      expect(() => store.create({ name: "x", slug: "Bad_Slug", root: dir })).toThrow(StoreError);
+      for (const reserved of ["admin", "oauth"]) {
+        const err = storeError(() => store.create({ name: "x", slug: reserved, root: dir }));
+        expect(err.status).toBe(400);
+        expect(err.message).toMatch(/reserved/);
+      }
+
+      const badCharset = storeError(() => store.create({ name: "x", slug: "Bad_Slug", root: dir }));
+      expect(badCharset.status).toBe(400);
+      expect(badCharset.message).toMatch(/must match/);
       expect(() => store.create({ name: "x", slug: "a", root: dir })).toThrow(StoreError);
 
       store.create({ name: "x", slug: "taken", root: dir });
-      expect(() => store.create({ name: "y", slug: "taken", root: dir })).toThrowError(/already exists/);
+      const dup = storeError(() => store.create({ name: "y", slug: "taken", root: dir }));
+      expect(dup.status).toBe(409);
+      expect(dup.message).toMatch(/already used by/);
     } finally {
       cleanup(dir);
     }
@@ -145,6 +166,8 @@ describe("seedDefaultProject (migration)", () => {
       expect(result!.project.slug).toBe("default");
       expect(result!.project.token).toBe("legacy-token-123");
       expect(result!.project.root).toBe(fs.realpathSync(seedRoot));
+      // ...and /mcp is assigned to it, so both /default and /mcp serve this project.
+      expect(store.getDefault()?.id).toBe(result!.project.id);
     } finally {
       cleanup(dir);
     }
@@ -168,6 +191,166 @@ describe("seedDefaultProject (migration)", () => {
       const result = seedDefaultProject(store, { root: dir, token: "x".repeat(32), readOnly: false, execEnabled: true });
       expect(result).toBeNull();
       expect(store.list()).toHaveLength(1);
+    } finally {
+      cleanup(dir);
+    }
+  });
+});
+
+describe("projects store: bare /mcp designation", () => {
+  it("falls back to the legacy 'default' slug when nothing is designated", () => {
+    const { dir, store } = newStore();
+    try {
+      const d = store.create({ name: "Default", slug: "default", root: dir });
+      store.create({ name: "Other", root: dir });
+      expect(store.getDefault()?.id).toBe(d.id);
+    } finally {
+      cleanup(dir);
+    }
+  });
+
+  it("has no default when neither a designation nor a 'default' project exists", () => {
+    const { dir, store } = newStore();
+    try {
+      store.create({ name: "Only", root: dir });
+      expect(store.getDefault()).toBeUndefined();
+    } finally {
+      cleanup(dir);
+    }
+  });
+
+  it("designates any project and persists the choice", () => {
+    const { dir, store, file } = newStore();
+    try {
+      store.create({ name: "Default", slug: "default", root: dir });
+      const ops = store.create({ name: "Ops", slug: "ops", root: dir });
+      expect(store.setDefault(ops.id).slug).toBe("ops");
+      expect(store.getDefault()?.id).toBe(ops.id);
+
+      const fresh = new ProjectsStore(file);
+      expect(fresh.getDefault()?.slug).toBe("ops");
+      expect(fresh.getBySlug("ops")?.id).toBe(ops.id); // own slug keeps working
+    } finally {
+      cleanup(dir);
+    }
+  });
+
+  it("reads slug '/mcp' as a request to bind the new project to the bare endpoint", () => {
+    const { dir, store } = newStore();
+    try {
+      expect(isMcpEndpointSlug("/mcp")).toBe(true);
+      expect(isMcpEndpointSlug(" mcp ")).toBe(true);
+      expect(isMcpEndpointSlug("my-project")).toBe(false);
+
+      const p = store.create({ name: "Ops", slug: "/mcp", root: dir });
+      expect(p.slug).toBe("ops"); // the slug is still derived from the name
+      expect(store.getDefault()?.id).toBe(p.id);
+      expect(store.getBySlug("ops")?.id).toBe(p.id); // /ops keeps working
+
+      // "mcp" alone works too, and moves the binding.
+      const q = store.create({ name: "Second", slug: "mcp", root: dir });
+      expect(q.slug).toBe("second");
+      expect(store.getDefault()?.id).toBe(q.id);
+    } finally {
+      cleanup(dir);
+    }
+  });
+
+  it("rejects unknown ids and drops the designation when that project is deleted", () => {
+    const { dir, store } = newStore();
+    try {
+      expect(() => store.setDefault("no-such-id")).toThrow(StoreError);
+      const ops = store.create({ name: "Ops", slug: "ops", root: dir });
+      store.setDefault(ops.id);
+      store.remove(ops.id);
+      expect(store.getDefault()).toBeUndefined();
+    } finally {
+      cleanup(dir);
+    }
+  });
+});
+
+describe("projects store: endpoint renames", () => {
+  it("renames a project's endpoint and follows it with the /mcp assignment", () => {
+    const { dir, store, file } = newStore();
+    try {
+      const p = store.create({ name: "Default", slug: "default", root: dir });
+      store.setDefault(p.id);
+      expect(store.getDefault()?.id).toBe(p.id);
+
+      const renamed = store.update(p.id, { slug: "renamed-x" });
+      expect(renamed.slug).toBe("renamed-x");
+      expect(store.getBySlug("default")).toBeUndefined();
+      expect(store.getBySlug("renamed-x")?.id).toBe(p.id);
+      // /mcp now points at the renamed slug.
+      expect(store.getDefault()?.slug).toBe("renamed-x");
+
+      const fresh = new ProjectsStore(file);
+      expect(fresh.getBySlug("renamed-x")?.id).toBe(p.id);
+      expect(fresh.getDefault()?.slug).toBe("renamed-x");
+    } finally {
+      cleanup(dir);
+    }
+  });
+
+  it("leaves the /mcp assignment alone when a different project is renamed", () => {
+    const { dir, store } = newStore();
+    try {
+      const d = store.create({ name: "Default", slug: "default", root: dir });
+      const other = store.create({ name: "Other", slug: "other", root: dir });
+      store.setDefault(d.id);
+
+      store.update(other.id, { slug: "other-2" });
+      expect(store.getDefault()?.id).toBe(d.id);
+      expect(store.getDefault()?.slug).toBe("default");
+      expect(store.getBySlug("other")).toBeUndefined();
+      expect(store.getBySlug("other-2")?.id).toBe(other.id);
+    } finally {
+      cleanup(dir);
+    }
+  });
+
+  it("reads slug 'mcp' on update as 'assign /mcp' without renaming the endpoint", () => {
+    const { dir, store } = newStore();
+    try {
+      const a = store.create({ name: "Alpha", slug: "alpha", root: dir });
+      const b = store.create({ name: "Beta", slug: "beta", root: dir });
+      store.setDefault(a.id);
+
+      const updated = store.update(b.id, { slug: "mcp" });
+      expect(updated.slug).toBe("beta"); // endpoint untouched
+      expect(store.getBySlug("beta")?.id).toBe(b.id);
+      expect(store.getDefault()?.id).toBe(b.id);
+      expect(store.getDefault()?.slug).toBe("beta");
+    } finally {
+      cleanup(dir);
+    }
+  });
+
+  it("rejects reserved, colliding, empty and unknown renames", () => {
+    const { dir, store } = newStore();
+    try {
+      const a = store.create({ name: "Alpha", slug: "alpha", root: dir });
+      const b = store.create({ name: "Beta", slug: "beta", root: dir });
+
+      // Each of these is either reserved, too short, or outside the slug charset.
+      for (const reserved of ["admin", "oauth", "api", "health", "a", "Bad Slug"]) {
+        const err = storeError(() => store.update(b.id, { slug: reserved }));
+        expect(err.status).toBe(400);
+        expect(store.get(b.id)?.slug).toBe("beta");
+      }
+
+      expect(storeError(() => store.update(b.id, { slug: "" })).status).toBe(400);
+
+      const dup = storeError(() => store.update(b.id, { slug: a.slug }));
+      expect(dup.status).toBe(409);
+      expect(dup.message).toMatch(/already used by/);
+      expect(store.get(b.id)?.slug).toBe("beta");
+
+      // Renaming to the project's own current slug is a no-op, not a collision.
+      expect(store.update(b.id, { slug: "beta" }).slug).toBe("beta");
+
+      expect(() => store.update("no-such-id", { slug: "wherever" })).toThrow(StoreError);
     } finally {
       cleanup(dir);
     }

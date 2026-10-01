@@ -56,12 +56,12 @@ JSON
   local INIT='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"e2e","version":"1"}}}'
   local H_JSON=(-H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream')
 
-  # 1. initialize without any Authorization header
+  # 1. initialize without any Authorization header (the seeded project is at /default)
   local CODE
-  CODE=$(curl -s -m 5 -o "$T/init.json" -w '%{http_code}' -D "$T/init.hdr" -X POST "$BASE/mcp/default" "${H_JSON[@]}" -d "$INIT")
+  CODE=$(curl -s -m 5 -o "$T/init.json" -w '%{http_code}' -D "$T/init.hdr" -X POST "$BASE/default" "${H_JSON[@]}" -d "$INIT")
   case "$MODE" in
-    none) check "POST /mcp/default without credentials" 200 "$CODE" ;;
-    *)    check "POST /mcp/default without credentials" 401 "$CODE" ;;
+    none) check "POST /default without credentials" 200 "$CODE" ;;
+    *)    check "POST /default without credentials" 401 "$CODE" ;;
   esac
   if [ "$MODE" != none ]; then
     grep -qi '^www-authenticate:.*oauth-protected-resource' "$T/init.hdr" \
@@ -72,15 +72,20 @@ JSON
   # 2. initialize with the project's own token
   local TOK; TOK=$(sed -n 's/.*"token": *"\([^"]*\)".*/\1/p' "$T/data/projects.json" | head -1)
   [ -n "$TOK" ] || { printf '  FAIL %-52s\n' "read the seeded project token"; FAIL=1; }
-  CODE=$(curl -s -m 5 -o "$T/init2.json" -w '%{http_code}' -D "$T/init2.hdr" -X POST "$BASE/mcp/default" \
+  CODE=$(curl -s -m 5 -o "$T/init2.json" -w '%{http_code}' -D "$T/init2.hdr" -X POST "$BASE/default" \
     -H "Authorization: Bearer $TOK" "${H_JSON[@]}" -d "$INIT")
-  check "POST /mcp/default with the project token" 200 "$CODE"
+  check "POST /default with the project token" 200 "$CODE"
+
+  # 2b. the seeded project is assigned to the shared /mcp path as well
+  CODE=$(curl -s -m 5 -o /dev/null -w '%{http_code}' -X POST "$BASE/mcp" \
+    -H "Authorization: Bearer $TOK" "${H_JSON[@]}" -d "$INIT")
+  check "POST /mcp also serves the seeded project" 200 "$CODE"
 
   # 3. a real tool call in that session (credentials only in the modes that need them)
   local SID; SID=$(grep -i '^mcp-session-id:' "$T/init2.hdr" | tr -d '\r' | awk '{print $2}')
   local AUTH_ARGS=()
   [ "$MODE" = none ] || AUTH_ARGS=(-H "Authorization: Bearer $TOK")
-  CODE=$(curl -s -m 5 -o "$T/call.json" -w '%{http_code}' -X POST "$BASE/mcp/default" "${H_JSON[@]}" "${AUTH_ARGS[@]}" \
+  CODE=$(curl -s -m 5 -o "$T/call.json" -w '%{http_code}' -X POST "$BASE/default" "${H_JSON[@]}" "${AUTH_ARGS[@]}" \
     -H "mcp-session-id: $SID" \
     -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"fs_read","arguments":{"path":"hello.txt"}}}')
   check "tools/call fs_read in that session" 200 "$CODE"
@@ -92,13 +97,20 @@ JSON
   CODE=$(curl -s -m 5 -o /dev/null -w '%{http_code}' "$BASE/.well-known/oauth-authorization-server")
   case "$MODE" in any) check "GET /.well-known/oauth-authorization-server" 200 "$CODE" ;;
                  *)   check "GET /.well-known/oauth-authorization-server" 404 "$CODE" ;; esac
-  CODE=$(curl -s -m 5 -o /dev/null -w '%{http_code}' "$BASE/.well-known/oauth-protected-resource/mcp/default")
-  case "$MODE" in any) check "GET /.well-known/oauth-protected-resource/mcp/default" 200 "$CODE" ;;
-                 *)   check "GET /.well-known/oauth-protected-resource/mcp/default" 404 "$CODE" ;; esac
+  CODE=$(curl -s -m 5 -o /dev/null -w '%{http_code}' "$BASE/.well-known/oauth-protected-resource/default")
+  case "$MODE" in any) check "GET /.well-known/oauth-protected-resource/default" 200 "$CODE" ;;
+                 *)   check "GET /.well-known/oauth-protected-resource/default" 404 "$CODE" ;; esac
   CODE=$(curl -s -m 5 -o /dev/null -w '%{http_code}' -X POST "$BASE/oauth/token" \
     -H 'Content-Type: application/x-www-form-urlencoded' -d 'grant_type=authorization_code')
   case "$MODE" in any) check "POST /oauth/token" 401 "$CODE" ;;
                  *)   check "POST /oauth/token" 404 "$CODE" ;; esac
+
+  # 4b. the legacy /mcp/<slug> shape is gone and explains the new one
+  CODE=$(curl -s -m 5 -o "$T/legacy.json" -w '%{http_code}' -X POST "$BASE/mcp/default" "${H_JSON[@]}" -d "$INIT")
+  check "POST /mcp/<slug> (legacy shape) -> 404" 404 "$CODE"
+  grep -q 'endpoints now live at /<slug>' "$T/legacy.json" \
+    && printf '  ok   %-52s yes\n' "404 body points at the /<slug> endpoint" \
+    || { printf '  FAIL %-52s\n' "404 body points at the /<slug> endpoint"; FAIL=1; }
 
   # 5. the admin API is independent of --auth and reports the mode
   CODE=$(curl -s -m 5 -o /dev/null -w '%{http_code}' "$BASE/api/projects")

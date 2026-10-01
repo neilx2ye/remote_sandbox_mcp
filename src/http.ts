@@ -5,7 +5,7 @@ import path from "node:path";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import type { AppConfig } from "./config.js";
-import { scopeForProject, type ProjectsStore } from "./projects.js";
+import { scopeForProject, type Project, type ProjectsStore } from "./projects.js";
 import type { OAuthStore } from "./oauth.js";
 import { handleOAuthRequest, firstHeader, protectedResourceMetadataUrl } from "./oauth-http.js";
 import { createServer } from "./server.js";
@@ -73,8 +73,12 @@ const ADMIN_ASSETS: Record<string, { file: string; type: string }> = {
 
 interface SessionEntry {
   transport: StreamableHTTPServerTransport;
-  slug: string;
+  /** Owning project, by immutable id so renaming an endpoint never breaks a session. */
+  projectId: string;
 }
+
+/** A project's own endpoint: exactly one path segment. */
+const SLUG_PATH_RE = /^\/([a-z0-9-]{2,32})$/;
 
 /**
  * CORS for browser-based MCP clients: the 401 challenge must be readable so the
@@ -148,18 +152,41 @@ export function startHttpServer(ctx: HttpContext): http.Server {
         return;
       }
 
-      // MCP endpoints: /mcp (default project) and /mcp/<slug>.
-      const mcpMatch = /^\/mcp(?:\/([a-z0-9-]{2,32}))?$/.exec(pathname);
-      if (!mcpMatch) {
-        sendJson(res, 404, { error: "not found" });
+      // MCP endpoints: every project always answers on its own /<slug>, and the
+      // shared /mcp path serves whichever project the console assigned to it.
+      const legacy = /^\/mcp\/([a-z0-9-]{2,32})$/.exec(pathname);
+      if (legacy) {
+        jsonRpcError(
+          res,
+          404,
+          -32004,
+          `Project endpoints now live at /<slug>: use /${legacy[1]} (the shared, assignable path is /mcp)`,
+        );
         return;
       }
-      const slug = mcpMatch[1] ?? "default";
-      const project = store.getBySlug(slug);
-      if (!project) {
-        jsonRpcError(res, 404, -32004, `Unknown project: ${slug}`);
-        return;
+      let project: Project | undefined;
+      if (pathname === "/mcp") {
+        project = store.getDefault();
+        if (!project) {
+          jsonRpcError(res, 404, -32004, "No project is assigned to /mcp (assign one in the admin console)");
+          return;
+        }
+      } else {
+        const slugMatch = SLUG_PATH_RE.exec(pathname);
+        if (!slugMatch) {
+          sendJson(res, 404, { error: "not found" });
+          return;
+        }
+        project = store.getBySlug(slugMatch[1]);
+        if (!project) {
+          jsonRpcError(res, 404, -32004, `Unknown project: ${slugMatch[1]}`);
+          return;
+        }
       }
+      // The session fence keys on the project, so /mcp and /<slug> are the same
+      // project (and cross-project reuse stays exact even after a rename).
+      const slug = project.slug;
+      const projectId = project.id;
 
       applyMcpCors(req, res);
       if (req.method === "OPTIONS") {
@@ -206,8 +233,8 @@ export function startHttpServer(ctx: HttpContext): http.Server {
 
       if (sessionId && sessions.has(sessionId)) {
         const sess = sessions.get(sessionId)!;
-        if (sess.slug !== slug) {
-          jsonRpcError(res, 403, -32003, `Forbidden: session belongs to project "${sess.slug}", not "${slug}"`);
+        if (sess.projectId !== projectId) {
+          jsonRpcError(res, 403, -32003, `Forbidden: this session belongs to another project, not "${slug}"`);
           return;
         }
         transport = sess.transport;
@@ -235,7 +262,7 @@ export function startHttpServer(ctx: HttpContext): http.Server {
             sessionIdGenerator: () => crypto.randomUUID(),
             onsessioninitialized: (sid) => {
               sessionRef.id = sid;
-              sessions.set(sid, { transport: newTransport, slug });
+              sessions.set(sid, { transport: newTransport, projectId });
             },
           });
           newTransport.onclose = () => {

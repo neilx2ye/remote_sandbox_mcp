@@ -25,7 +25,7 @@
 <section id="view-login" class="login-card">
   <span class="brand-mark" aria-hidden="true"></span>
   <h2>输入 Admin Token</h2>
-  <p class="muted">使用启动服务时控制台打印的 <code>MCP_ADMIN_TOKEN</code>，或配置文件中的 <code>adminToken</code>。</p>
+  <p class="muted">使用配置文件里的 <code>MCP_ADMIN_TOKEN</code> 登录。</p>
   <form id="form-login">
     <input type="password" id="input-token" placeholder="admin token" autocomplete="current-password" aria-label="Admin Token" required>
     <button type="submit" class="btn btn-primary">登录</button>
@@ -52,7 +52,7 @@
     <form id="form-project">
       <div class="form-row">
         <label>名称 *<input type="text" id="f-name" required maxlength="100" placeholder="例如：我的网站后端"></label>
-        <label>slug（可选，留空自动派生）<input type="text" id="f-slug" pattern="[a-z0-9-]{2,32}" placeholder="my-project"></label>
+        <label>端点路径（可选；留空自动生成，填 <span class="mono">/mcp</span> 表示同时把共享路径 /mcp 指向它）<input type="text" id="f-slug" pattern="/?[a-z0-9-]{2,32}" placeholder="自动生成，例如 ops"></label>
       </div>
       <div class="form-row">
         <label class="grow">项目根目录 *（设备上任意已存在目录）<input type="text" id="f-root" required placeholder="C:\projects\my-app 或 /home/me/my-app"></label>
@@ -74,12 +74,13 @@
     <div class="tbl-wrap">
       <table class="tbl" id="tbl-projects">
         <thead>
-          <tr><th>名称 / slug</th><th>根目录</th><th>模式</th><th>创建时间</th><th>MCP 端点</th><th>Token</th><th>操作</th></tr>
+          <tr><th>名称 / 端点</th><th>根目录</th><th>模式</th><th>MCP 端点</th><th>操作</th></tr>
         </thead>
         <tbody></tbody>
       </table>
     </div>
     <p id="projects-empty" class="muted empty-note hidden">暂无项目，点击"新建项目"创建第一个。</p>
+    <p class="muted">每个项目有自己的端点 <span class="mcp-path">/&lt;slug&gt;</span>；共享路径 <span class="mcp-path">/mcp</span> 同一时刻指向其中一个项目，可随时切换。</p>
   </section>
 
   <!-- OAuth 授权 -->
@@ -91,9 +92,7 @@
       </div>
     </div>
     <p class="muted oauth-hint">
-      连接器走 OAuth 时，AI 客户端会访问 <span class="mcp-path">/.well-known/oauth-protected-resource/mcp/&lt;slug&gt;</span>、
-      <span class="mcp-path">/.well-known/oauth-authorization-server</span> 与 <span class="mcp-path">/oauth/authorize</span>（前面拼隧道域名），
-      在授权页面里用 Admin Token 登录并选择要开放的项目。授权令牌只对所选项目的 <span class="mcp-path">/mcp/&lt;slug&gt;</span> 有效。
+      OAuth 走 <span class="mcp-path">/.well-known/oauth-protected-resource/&lt;slug&gt;</span> 与 <span class="mcp-path">/oauth/authorize</span>；令牌只对授权时选中的项目 <span class="mcp-path">/&lt;slug&gt;</span> 有效。
     </p>
     <div class="tbl-wrap">
       <table class="tbl" id="tbl-oauth">

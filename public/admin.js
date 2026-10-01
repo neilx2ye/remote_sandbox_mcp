@@ -133,10 +133,10 @@
     var note = $("#auth-note");
     $("#card-oauth").classList.toggle("hidden", mode !== "any");
     if (mode === "none") {
-      note.textContent = "⚠️ MCP 端点已完全开放（auth=none）：任何能访问本端口的人都能读写项目文件并执行 exec_run，无需任何 token。请确保只在 127.0.0.1 或 SSH 端口转发下使用，切勿挂到公网隧道。";
+      note.textContent = "⚠️ auth=none：任何能访问本端口的人都能读写项目文件并执行命令，请只在 127.0.0.1 或 SSH 端口转发下使用，切勿挂到公网隧道。";
       note.classList.remove("hidden");
     } else if (mode === "token") {
-      note.textContent = "MCP 端点只接受各项目的 token，OAuth 端点已关闭（auth=token）。";
+      note.textContent = "auth=token：端点只接受各项目的 token，OAuth 端点已关闭。";
       note.classList.remove("hidden");
     } else {
       note.classList.add("hidden");
@@ -187,54 +187,34 @@
       var tr = el("tr");
 
       var nameTd = el("td");
-      nameTd.appendChild(el("div", { class: "proj-name" }, p.name));
-      nameTd.appendChild(el("div", { class: "slug-line mono" }, p.slug));
+      var nameLine = el("div", { class: "proj-name" }, p.name);
+      if (p.isDefault) nameLine.appendChild(el("span", { class: "tag default" }, "/mcp"));
+      nameTd.appendChild(nameLine);
+      nameTd.appendChild(el("div", { class: "slug-line mono" }, "/" + p.slug));
       tr.appendChild(nameTd);
 
       tr.appendChild(el("td", { class: "mono root-path" }, p.root));
       tr.appendChild(el("td")).appendChild(modeTags(p));
-      tr.appendChild(el("td", null, fmtTime(p.createdAt)));
 
       // MCP 端点（相对路径；前面拼隧道域名即可用于连接器）
       var mcpTd = el("td");
-      mcpTd.appendChild(el("span", { class: "mcp-path", title: "接入连接器时，在前面加上你的隧道域名，如 https://xxx.trycloudflare.com" + p.mcpPath }, p.mcpPath));
+      var paths = el("div", { class: "mcp-paths" });
+      paths.appendChild(el("span", {
+        class: "mcp-path",
+        title: "该项目独立的端点；接入连接器时在前面加上你的隧道域名，如 https://xxx.trycloudflare.com" + p.mcpPath,
+      }, p.mcpPath));
+      if (p.isDefault) {
+        paths.appendChild(el("span", {
+          class: "mcp-path alias",
+          title: "共享路径 /mcp 当前也指向该项目（与它自己的端点 " + p.mcpPath + " 互不影响）",
+        }, "/mcp"));
+      }
+      mcpTd.appendChild(paths);
       var copyMcp = el("button", { class: "btn btn-small", title: "复制端点路径" }, "复制");
       copyMcp.addEventListener("click", function () { copyText(p.mcpPath, copyMcp); });
       mcpTd.appendChild(document.createTextNode(" "));
       mcpTd.appendChild(copyMcp);
       tr.appendChild(mcpTd);
-
-      // Token（掩码 + 显示完整 + 复制）；auth=none 时 token 不参与鉴权
-      var tokTd = el("td");
-      var fullToken = null;
-      var tokSpan = null;
-      if (state.auth === "none") {
-        tokTd.appendChild(el("span", { class: "muted" }, "未启用（auth=none）"));
-      } else {
-        tokSpan = el("span", { class: "mono token-value" }, p.token);
-        tokTd.appendChild(tokSpan);
-        var eye = el("button", { class: "btn btn-small", title: "显示完整 token" }, "👁");
-        eye.addEventListener("click", function () {
-          if (fullToken) { tokSpan.textContent = fullToken; return; }
-          apiJson("/api/projects/" + encodeURIComponent(p.id)).then(function (d) {
-            fullToken = d.project.token;
-            tokSpan.textContent = fullToken;
-          }).catch(function (err) { showBanner("获取 token 失败：" + err.message, true); });
-        });
-        var copyTok = el("button", { class: "btn btn-small", title: "复制完整 token" }, "复制");
-        copyTok.addEventListener("click", function () {
-          if (fullToken) { copyText(fullToken, copyTok); return; }
-          apiJson("/api/projects/" + encodeURIComponent(p.id)).then(function (d) {
-            fullToken = d.project.token;
-            tokSpan.textContent = fullToken;
-            copyText(fullToken, copyTok);
-          }).catch(function (err) { showBanner("获取 token 失败：" + err.message, true); });
-        });
-        tokTd.appendChild(document.createTextNode(" "));
-        tokTd.appendChild(eye);
-        tokTd.appendChild(copyTok);
-      }
-      tr.appendChild(tokTd);
 
       // 操作
       var actTd = el("td", { class: "actions" });
@@ -242,15 +222,21 @@
       btnFiles.addEventListener("click", function () { openBrowser(p); });
       var btnEdit = el("button", { class: "btn btn-small" }, "编辑");
       btnEdit.addEventListener("click", function () { openForm(p); });
-      var btnRegen = el("button", { class: "btn btn-small" }, "重置 token");
-      btnRegen.addEventListener("click", function () {
-        if (!confirm("确定要重新生成项目「" + p.name + "」的 token 吗？\n旧 token 将立即失效，所有使用旧 token 的连接器都会断开。")) return;
-        apiJson("/api/projects/" + encodeURIComponent(p.id) + "/regenerate-token", { method: "POST" }).then(function (d) {
-          fullToken = d.project.token;
-          if (tokSpan) tokSpan.textContent = fullToken;
-          showBanner("项目「" + p.name + "」的新 token：" + fullToken + "（请立即复制保存，旧 token 已失效）");
-        }).catch(function (err) { showBanner("重置 token 失败：" + err.message, true); });
-      });
+      // 每行都有这个按钮：已指向 /mcp 的项目显示为不可点的「已是 /mcp」
+      var btnDefault = el("button", { class: "btn btn-small" }, p.isDefault ? "已是 /mcp" : "设为 /mcp");
+      if (p.isDefault) {
+        btnDefault.disabled = true;
+        btnDefault.title = "共享路径 /mcp 当前就指向该项目（它自己的端点 " + p.mcpPath + " 不受影响）";
+      } else {
+        btnDefault.title = "把共享路径 /mcp 指向该项目";
+        btnDefault.addEventListener("click", function () {
+          if (!confirm("把共享路径 /mcp 指向项目「" + p.name + "」吗？\n之后连接器地址可以用 https://<隧道域名>/mcp；该项目自己的端点 " + p.mcpPath + " 不受影响。")) return;
+          apiJson("/api/projects/" + encodeURIComponent(p.id) + "/set-default", { method: "POST" }).then(function () {
+            showBanner("/mcp 现在指向项目「" + p.name + "」（它自己的端点 " + p.mcpPath + " 不变）");
+            loadProjects();
+          }).catch(function (err) { showBanner("设置失败：" + err.message, true); });
+        });
+      }
       var btnDel = el("button", { class: "btn btn-small btn-danger" }, "删除");
       btnDel.addEventListener("click", function () {
         if (!confirm("确定删除项目「" + p.name + "」（" + p.slug + "）吗？\n只会删除登记信息，不会删除磁盘上的任何文件。")) return;
@@ -260,7 +246,9 @@
           loadProjects();
         }).catch(function (err) { showBanner("删除失败：" + err.message, true); });
       });
-      [btnFiles, btnEdit, btnRegen, btnDel].forEach(function (b) { actTd.appendChild(b); });
+      [btnFiles, btnEdit, btnDefault, btnDel].forEach(function (b) {
+        actTd.appendChild(b);
+      });
       tr.appendChild(actTd);
 
       tbody.appendChild(tr);
@@ -300,7 +288,7 @@
         var wrap = el("div", { class: "oauth-projects" });
         c.projects.forEach(function (slug) {
           var p = state.projects.find(function (x) { return x.slug === slug; });
-          wrap.appendChild(el("span", { class: "mcp-path" }, "/mcp/" + slug + (p ? "（" + p.name + "）" : "")));
+          wrap.appendChild(el("span", { class: "mcp-path" }, "/" + slug + (p ? "（" + p.name + "）" : "")));
         });
         projTd.appendChild(wrap);
       } else {
@@ -350,7 +338,7 @@
     $("#form-title").textContent = project ? ("编辑项目：" + project.name) : "新建项目";
     $("#f-name").value = project ? project.name : "";
     $("#f-slug").value = project ? project.slug : "";
-    $("#f-slug").disabled = !!project; // slug 创建后不可改
+    $("#f-slug").placeholder = project ? "留空或填 /mcp 表示不改变端点" : "自动生成，例如 ops";
     $("#f-root").value = project ? project.root : "";
     $("#f-readonly").checked = project ? project.readOnly : false;
     $("#f-exec").checked = project ? project.execEnabled : true;
@@ -378,15 +366,18 @@
     var slug = $("#f-slug").value.trim();
     var req;
     if (state.editingId) {
+      if (slug) body.slug = slug; // 改端点；填 /mcp 表示把共享路径 /mcp 指向该项目
       req = apiJson("/api/projects/" + encodeURIComponent(state.editingId), { method: "PATCH", body: JSON.stringify(body) })
-        .then(function () {
-          showBanner("项目已保存（如修改了根目录，已有 MCP 会话需重新连接才会生效）");
+        .then(function (d) {
+          showBanner("项目已保存，端点 /" + d.project.slug + (d.project.isDefault ? "（共享路径 /mcp 也指向它）" : "") +
+            "。如修改了根目录或端点，已有 MCP 会话需重新连接才会生效");
         });
     } else {
       if (slug) body.slug = slug;
       req = apiJson("/api/projects", { method: "POST", body: JSON.stringify(body) })
         .then(function (d) {
-          showBanner("项目「" + d.project.name + "」已创建！token：" + d.project.token + "（仅此一次完整显示，请立即复制保存）");
+          showBanner("项目「" + d.project.name + "」已创建，端点 /" + d.project.slug +
+            (d.project.isDefault ? "（共享路径 /mcp 也指向它）" : ""));
         });
     }
     req.then(function () { closeForm(); loadProjects(); })

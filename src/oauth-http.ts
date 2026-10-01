@@ -8,7 +8,7 @@ import { tokenMatches } from "./util/token.js";
 
 /**
  * OAuth 2.1 authorization server for the MCP endpoints:
- *   GET  /.well-known/oauth-protected-resource[/mcp/<slug>]   (RFC 9728)
+ *   GET  /.well-known/oauth-protected-resource[/<slug>]       (RFC 9728)
  *   GET  /.well-known/oauth-authorization-server              (RFC 8414)
  *   POST /oauth/register                                      (RFC 7591)
  *   GET  /oauth/authorize   POST /oauth/authorize             (consent page)
@@ -20,7 +20,7 @@ import { tokenMatches } from "./util/token.js";
  * access token is bound to that single project slug.
  *
  * Tunnel note: clients reach these paths directly, so a public tunnel must
- * expose /.well-known/* and /oauth/* in addition to /mcp*.
+ * expose /.well-known/* and /oauth/* in addition to the MCP endpoints.
  */
 
 export interface OAuthHttpContext {
@@ -56,7 +56,7 @@ export function publicBaseUrl(req: http.IncomingMessage, config: AppConfig): str
 
 /** Metadata URL advertised in the WWW-Authenticate challenge for one project. */
 export function protectedResourceMetadataUrl(req: http.IncomingMessage, config: AppConfig, slug: string): string {
-  return `${publicBaseUrl(req, config)}${WELL_KNOWN_PRM}/mcp/${slug}`;
+  return `${publicBaseUrl(req, config)}${WELL_KNOWN_PRM}/${slug}`;
 }
 
 export function authorizationServerUrl(req: http.IncomingMessage, config: AppConfig): string {
@@ -293,16 +293,16 @@ function consentPage(res: http.ServerResponse, status: number, input: ConsentInp
 <input type="radio" name="project" value="${escapeHtml(p.slug)}"${checked} required>
 <span class="proj-body">
 <span class="proj-name">${escapeHtml(p.name)}${projectTags(p)}</span>
-<span class="proj-line mono">/mcp/${escapeHtml(p.slug)} · ${escapeHtml(p.root)}</span>
+<span class="proj-line mono">/${escapeHtml(p.slug)} · ${escapeHtml(p.root)}</span>
 </span>
 </label>`;
     })
     .join("\n");
 
   const mismatch =
-    input.resource && input.selected && !input.resource.endsWith(`/mcp/${input.selected}`)
+    input.resource && input.selected && !input.resource.endsWith(`/${input.selected}`) && !input.resource.endsWith("/mcp")
       ? `<p class="warn">客户端请求的资源是 <span class="mono">${escapeHtml(input.resource)}</span>，
-你当前选中的是另一个项目。授权后客户端用该令牌访问原资源会被拒绝，除非你把连接器地址改成对应的 <code>/mcp/&lt;slug&gt;</code>。</p>`
+你当前选中的是另一个项目。授权后客户端用该令牌访问原资源会被拒绝，除非你把连接器地址改成对应的 <code>/&lt;slug&gt;</code>。</p>`
       : "";
 
   const inner = `<h1>授权 MCP 访问</h1>
@@ -326,7 +326,7 @@ ${mismatch}
 <button type="submit" name="decision" value="deny">拒绝</button>
 </div>
 </form>
-<p class="hint">令牌只对该项目有效（<code>/mcp/&lt;slug&gt;</code>），1 小时后过期并自动刷新；可在管理台的「OAuth 授权」中随时撤销。请确认回调地址是你信任的客户端。</p>`;
+<p class="hint">令牌只对该项目有效（端点 <code>/&lt;slug&gt;</code>），1 小时后过期并自动刷新；可在管理台的「OAuth 授权」中随时撤销。请确认回调地址是你信任的客户端。</p>`;
 
   htmlPage(res, status, pageShell("授权 · remote-sandbox-mcp", inner));
 }
@@ -388,7 +388,7 @@ function slugFromResource(resource: string | null): string | null {
   } catch {
     return null;
   }
-  const m = /^\/mcp\/([a-z0-9-]{2,32})\/?$/.exec(pathname);
+  const m = /^\/([a-z0-9-]{2,32})\/?$/.exec(pathname);
   return m ? m[1] : null;
 }
 
@@ -567,7 +567,7 @@ async function handleAuthorizePost(
     codeChallenge: parsed.params.get("code_challenge") ?? "",
     // Canonical indicator for the granted project; whatever the client asked for
     // is re-checked against it at the token endpoint (see resourceCoversProject).
-    resource: `${publicBaseUrl(req, ctx.config)}/mcp/${project.slug}`,
+    resource: `${publicBaseUrl(req, ctx.config)}/${project.slug}`,
     scope: parsed.scope,
   });
   ctx.audit.write({
@@ -767,14 +767,14 @@ function protectedResourceMetadata(ctx: OAuthHttpContext, req: http.IncomingMess
     const project = ctx.store.getBySlug(slug);
     if (!project) return null;
     return {
-      resource: `${base}/mcp/${project.slug}`,
+      resource: `${base}/${project.slug}`,
       authorization_servers: [base],
       scopes_supported: ["mcp"],
       bearer_methods_supported: ["header"],
       resource_name: project.name,
     };
   }
-  // Root variant (path-aware probe missed): the collection of project endpoints.
+  // Root variant: the shared, assignable /mcp path.
   return {
     resource: `${base}/mcp`,
     authorization_servers: [base],
@@ -835,7 +835,7 @@ export async function handleOAuthRequest(
         const suffix = pathname.slice(WELL_KNOWN_PRM.length).replace(/^\/+/, "");
         let slug: string | null = null;
         if (suffix) {
-          const m = /^mcp\/([a-z0-9-]{2,32})$/.exec(suffix);
+          const m = /^([a-z0-9-]{2,32})$/.exec(suffix);
           if (!m) {
             sendJson(res, 404, { error: "not found" });
             return true;

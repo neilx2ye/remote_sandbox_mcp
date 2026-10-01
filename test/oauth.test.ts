@@ -178,10 +178,10 @@ afterAll(async () => {
 
 describe("OAuth discovery", () => {
   it("serves path-aware protected resource metadata for a project", async () => {
-    const res = await fetch(`${base}/.well-known/oauth-protected-resource/mcp/slug-a`);
+    const res = await fetch(`${base}/.well-known/oauth-protected-resource/slug-a`);
     expect(res.status).toBe(200);
     const md = await res.json();
-    expect(md.resource).toBe(`${base}/mcp/slug-a`);
+    expect(md.resource).toBe(`${base}/slug-a`);
     expect(md.authorization_servers).toEqual([base]);
     expect(md.resource_name).toBe("Project A");
     expect(md.bearer_methods_supported).toEqual(["header"]);
@@ -192,7 +192,7 @@ describe("OAuth discovery", () => {
     expect(root.status).toBe(200);
     expect((await root.json()).resource).toBe(`${base}/mcp`);
 
-    const missing = await fetch(`${base}/.well-known/oauth-protected-resource/mcp/nope`);
+    const missing = await fetch(`${base}/.well-known/oauth-protected-resource/nope`);
     expect(missing.status).toBe(404);
   });
 
@@ -210,11 +210,11 @@ describe("OAuth discovery", () => {
   });
 
   it("sends a WWW-Authenticate challenge on unauthenticated MCP requests", async () => {
-    const res = await mcpInitialize("/mcp/slug-a", "wrong-token");
+    const res = await mcpInitialize("/slug-a", "wrong-token");
     expect(res.status).toBe(401);
     const header = res.headers.get("www-authenticate") ?? "";
     expect(header).toContain("Bearer");
-    expect(header).toContain(`resource_metadata="${base}/.well-known/oauth-protected-resource/mcp/slug-a"`);
+    expect(header).toContain(`resource_metadata="${base}/.well-known/oauth-protected-resource/slug-a"`);
   });
 });
 
@@ -372,11 +372,11 @@ describe("token endpoint", () => {
     const clientId = await registerClient();
     const { verifier, challenge } = pkce();
     const consent = await postConsent(
-      { clientId, codeChallenge: challenge, resource: `${base}/mcp/slug-a` },
+      { clientId, codeChallenge: challenge, resource: `${base}/slug-a` },
       { admin_token: ADMIN_TOKEN, project: "slug-b", decision: "allow" },
     );
     const code = new URL(consent.headers.get("location")!).searchParams.get("code")!;
-    const res = await exchangeCode({ code, verifier, clientId, resource: `${base}/mcp/slug-a` });
+    const res = await exchangeCode({ code, verifier, clientId, resource: `${base}/slug-a` });
     expect(res.status).toBe(400);
     expect((await res.json()).error).toBe("invalid_target");
   });
@@ -411,18 +411,18 @@ describe("MCP access with OAuth tokens", () => {
   it("accepts an access token on the authorized project only", async () => {
     const { accessToken } = await authorizeProject("slug-a");
 
-    const ok = await mcpInitialize("/mcp/slug-a", accessToken);
+    const ok = await mcpInitialize("/slug-a", accessToken);
     expect(ok.status).toBe(200);
     expect(ok.headers.get("mcp-session-id")).toBeTruthy();
     expect(await ok.text()).toContain("remote-sandbox-mcp");
 
-    const cross = await mcpInitialize("/mcp/slug-b", accessToken);
+    const cross = await mcpInitialize("/slug-b", accessToken);
     expect(cross.status).toBe(403);
     expect(await cross.text()).toContain("authorized for project");
   });
 
   it("still accepts the project's static token", async () => {
-    const res = await mcpInitialize("/mcp/slug-a", staticTokenA);
+    const res = await mcpInitialize("/slug-a", staticTokenA);
     expect(res.status).toBe(200);
   });
 
@@ -434,7 +434,7 @@ describe("MCP access with OAuth tokens", () => {
       body: new URLSearchParams({ token: accessToken }).toString(),
     });
     expect(revoke.status).toBe(200);
-    expect((await mcpInitialize("/mcp/slug-a", accessToken)).status).toBe(401);
+    expect((await mcpInitialize("/slug-a", accessToken)).status).toBe(401);
   });
 
   it("keeps discovery/CORS usable from a browser origin", async () => {
@@ -479,7 +479,7 @@ describe("admin console view", () => {
     expect(again.status).toBe(404);
 
     // A token from an unrelated client keeps working after that revocation.
-    expect((await mcpInitialize("/mcp/slug-a", liveToken)).status).toBe(200);
+    expect((await mcpInitialize("/slug-a", liveToken)).status).toBe(200);
   });
 });
 

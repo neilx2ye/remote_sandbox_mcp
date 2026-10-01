@@ -29,11 +29,36 @@ export class StoreError extends Error {
   }
 }
 
-export const RESERVED_SLUGS = ["admin", "api", "health", "mcp"];
+/**
+ * First path segment each project's endpoint lives at (`/<slug>`), so anything
+ * that is already a route of this server can never be claimed by a project.
+ * "mcp" stays reserved for the shared, movable `/mcp` alias.
+ */
+export const RESERVED_SLUGS = ["admin", "api", "health", "mcp", "oauth"];
 const SLUG_RE = /^[a-z0-9-]{2,32}$/;
 
 export function isValidSlug(s: string): boolean {
   return SLUG_RE.test(s) && !RESERVED_SLUGS.includes(s);
+}
+
+/**
+ * Endpoint input that means "also serve this project at the shared /mcp path"
+ * instead of naming its own path. The project keeps (or derives) its own slug.
+ */
+export function isMcpEndpointSlug(value: string): boolean {
+  const v = value.trim().toLowerCase().replace(/^\/+/, "");
+  return v === "mcp";
+}
+
+/** Accept the endpoint path as written in URLs ("/ops") as well as a bare slug. */
+export function normalizeSlugInput(value: string | undefined): string {
+  if (value === undefined) return "";
+  return value.trim().replace(/^\/+/, "").replace(/\/+$/, "").toLowerCase();
+}
+
+/** Fallback stem for names that contain no usable ASCII (e.g. all-Chinese names). */
+function randomSlugStem(): string {
+  return `proj-${crypto.randomBytes(2).toString("hex")}`;
 }
 
 /** Derive a slug candidate from a display name. */
@@ -46,7 +71,7 @@ export function slugify(name: string): string {
     .replace(/-+$/, "")
     .slice(0, 32)
     .replace(/-+$/, "");
-  return isValidSlug(s) ? s : "project";
+  return isValidSlug(s) ? s : randomSlugStem();
 }
 
 export function generateToken(): string {
@@ -90,11 +115,14 @@ function validateName(name: unknown): string {
 
 interface PersistedData {
   version: number;
+  /** Slug of the project also served at the shared /mcp path; null = /mcp is unassigned. */
+  defaultSlug?: string | null;
   projects: Project[];
 }
 
 export interface CreateProjectInput {
   name: string;
+  /** Endpoint path/slug; omitted or empty derives one from the name. "mcp" assigns /mcp. */
   slug?: string;
   root: string;
   readOnly?: boolean;
@@ -105,6 +133,8 @@ export interface CreateProjectInput {
 
 export interface UpdateProjectInput {
   name?: string;
+  /** New endpoint path/slug; "mcp" assigns the shared /mcp path to this project. */
+  slug?: string;
   root?: string;
   readOnly?: boolean;
   execEnabled?: boolean;
@@ -113,6 +143,7 @@ export interface UpdateProjectInput {
 export class ProjectsStore {
   private filePath: string;
   private projects: Project[] = [];
+  private defaultSlug: string | null = null;
 
   constructor(filePath: string) {
     this.filePath = filePath;
@@ -122,6 +153,7 @@ export class ProjectsStore {
   private load(): void {
     if (!fs.existsSync(this.filePath)) {
       this.projects = [];
+      this.defaultSlug = null;
       return;
     }
     let data: PersistedData;
@@ -131,11 +163,12 @@ export class ProjectsStore {
       throw new Error(`Cannot parse projects file ${this.filePath}: ${(e as Error).message}`);
     }
     this.projects = Array.isArray(data.projects) ? data.projects : [];
+    this.defaultSlug = typeof data.defaultSlug === "string" && data.defaultSlug.length > 0 ? data.defaultSlug : null;
   }
 
   private save(): void {
     fs.mkdirSync(path.dirname(this.filePath), { recursive: true });
-    const data: PersistedData = { version: 1, projects: this.projects };
+    const data: PersistedData = { version: 2, defaultSlug: this.defaultSlug, projects: this.projects };
     fs.writeFileSync(this.filePath, JSON.stringify(data, null, 2) + "\n", "utf8");
   }
 
@@ -153,8 +186,45 @@ export class ProjectsStore {
     return p ? { ...p } : undefined;
   }
 
+  /**
+   * The project also served at the shared /mcp path: the explicitly assigned
+   * one when there is one, otherwise the legacy "default" slug (what older
+   * deployments seeded). Undefined means /mcp is unassigned.
+   */
+  getDefault(): Project | undefined {
+    if (this.defaultSlug) {
+      const designated = this.getBySlug(this.defaultSlug);
+      if (designated) return designated;
+    }
+    return this.getBySlug("default");
+  }
+
+  /** Assign the shared /mcp path to this project (it keeps its own slug too). */
+  setDefault(id: string): Project {
+    const project = this.get(id);
+    if (!project) throw new StoreError(404, `project not found: ${id}`);
+    this.defaultSlug = project.slug;
+    this.save();
+    return project;
+  }
+
+  /** Validate an explicitly requested endpoint path (leading slash already stripped). */
+  private validateSlugInput(requested: string, selfId?: string): string {
+    if (!SLUG_RE.test(requested)) {
+      throw new StoreError(400, `invalid endpoint "/${requested}": must match [a-z0-9-], 2-32 chars`);
+    }
+    if (RESERVED_SLUGS.includes(requested)) {
+      throw new StoreError(400, `endpoint "/${requested}" is reserved by the server`);
+    }
+    const existing = this.getBySlug(requested);
+    if (existing && existing.id !== selfId) {
+      throw new StoreError(409, `endpoint "/${requested}" is already used by project "${existing.name}"`);
+    }
+    return requested;
+  }
+
   private uniqueSlug(base: string): string {
-    const stem = isValidSlug(base) ? base : "project";
+    const stem = isValidSlug(base) ? base : randomSlugStem();
     let candidate = stem;
     let n = 2;
     while (this.getBySlug(candidate)) {
@@ -167,18 +237,16 @@ export class ProjectsStore {
   create(input: CreateProjectInput): Project {
     const name = validateName(input.name);
     const root = validateRoot(input.root);
+    const requested = normalizeSlugInput(input.slug);
     let slug: string;
-    if (input.slug !== undefined && input.slug !== "") {
-      if (!SLUG_RE.test(input.slug)) {
-        throw new StoreError(400, `invalid slug "${input.slug}": must match [a-z0-9-], 2-32 chars`);
-      }
-      if (RESERVED_SLUGS.includes(input.slug)) {
-        throw new StoreError(400, `slug "${input.slug}" is reserved`);
-      }
-      if (this.getBySlug(input.slug)) {
-        throw new StoreError(409, `slug "${input.slug}" already exists`);
-      }
-      slug = input.slug;
+    let bindToMcpEndpoint = false;
+    if (isMcpEndpointSlug(requested)) {
+      // "mcp" is not a slug but an assignment: the project still gets its own
+      // derived endpoint and additionally answers on the shared /mcp path.
+      bindToMcpEndpoint = true;
+      slug = this.uniqueSlug(slugify(name));
+    } else if (requested !== "") {
+      slug = this.validateSlugInput(requested);
     } else {
       slug = this.uniqueSlug(slugify(name));
     }
@@ -193,6 +261,7 @@ export class ProjectsStore {
       createdAt: new Date().toISOString(),
     };
     this.projects.push(project);
+    if (bindToMcpEndpoint) this.defaultSlug = project.slug;
     this.save();
     return { ...project };
   }
@@ -202,6 +271,22 @@ export class ProjectsStore {
     if (idx === -1) throw new StoreError(404, `project not found: ${id}`);
     const p = { ...this.projects[idx] };
     if (patch.name !== undefined) p.name = validateName(patch.name);
+    if (patch.slug !== undefined) {
+      const requested = normalizeSlugInput(patch.slug);
+      if (isMcpEndpointSlug(requested)) {
+        // Assigning the shared /mcp path does not rename the project's own endpoint.
+        this.defaultSlug = p.slug;
+      } else if (requested === "") {
+        throw new StoreError(400, "endpoint path must not be empty");
+      } else {
+        const next = this.validateSlugInput(requested, id);
+        if (next !== p.slug) {
+          // The /mcp assignment follows the project it points at.
+          if (this.defaultSlug === p.slug) this.defaultSlug = next;
+          p.slug = next;
+        }
+      }
+    }
     if (patch.root !== undefined) p.root = validateRoot(patch.root);
     if (patch.readOnly !== undefined) p.readOnly = Boolean(patch.readOnly);
     if (patch.execEnabled !== undefined) p.execEnabled = Boolean(patch.execEnabled);
@@ -221,7 +306,9 @@ export class ProjectsStore {
   remove(id: string): boolean {
     const idx = this.projects.findIndex((x) => x.id === id);
     if (idx === -1) return false;
-    this.projects.splice(idx, 1);
+    const [removed] = this.projects.splice(idx, 1);
+    // Deleting the /mcp project just leaves /mcp unassigned.
+    if (removed.slug === this.defaultSlug) this.defaultSlug = null;
     this.save();
     return true;
   }
@@ -234,8 +321,9 @@ export interface SeedResult {
 
 /**
  * Migration seed: when the store is empty, create the "default" project from
- * the legacy single-sandbox configuration so existing connector configs keep
- * working. Returns null when the store already has projects.
+ * the legacy single-sandbox configuration, served at both /default and the
+ * shared /mcp path so existing connector configs keep working. Returns null
+ * when the store already has projects.
  */
 export function seedDefaultProject(
   store: ProjectsStore,
@@ -245,7 +333,7 @@ export function seedDefaultProject(
   const tokenGenerated = !seed.token;
   const project = store.create({
     name: "Default",
-    slug: "default",
+    slug: "/mcp",
     root: seed.root,
     readOnly: seed.readOnly,
     execEnabled: seed.execEnabled,
