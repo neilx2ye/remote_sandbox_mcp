@@ -147,6 +147,7 @@ beforeAll(async () => {
     adminTokenProvided: true,
     maxFileBytes: 1024 * 1024,
     readOnly: false,
+    auth: "any",
     stdio: false,
     exec: { enabled: true, timeoutMs: 5000, allow: [], deny: [] },
     publicUrl: null,

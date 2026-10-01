@@ -4,6 +4,7 @@
 
   var state = {
     token: sessionStorage.getItem("adminToken") || "",
+    auth: "any",
     projects: [],
     editingId: null,
     browser: { project: null, path: "." },
@@ -110,8 +111,36 @@
     $("#view-login").classList.add("hidden");
     $("#view-main").classList.remove("hidden");
     $("#btn-logout").classList.remove("hidden");
-    loadProjects();
-    loadOAuthClients();
+    loadStatus().then(function () {
+      loadProjects();
+      if (state.auth === "any") loadOAuthClients();
+    });
+  }
+
+  /* ---------- 鉴权模式 ---------- */
+
+  function loadStatus() {
+    return apiJson("/api/status").then(function (data) {
+      applyAuthMode(data.auth || "any");
+    }).catch(function () {
+      // Older servers without /api/status: assume the historic default.
+      applyAuthMode("any");
+    });
+  }
+
+  function applyAuthMode(mode) {
+    state.auth = mode;
+    var note = $("#auth-note");
+    $("#card-oauth").classList.toggle("hidden", mode !== "any");
+    if (mode === "none") {
+      note.textContent = "⚠️ MCP 端点已完全开放（auth=none）：任何能访问本端口的人都能读写项目文件并执行 exec_run，无需任何 token。请确保只在 127.0.0.1 或 SSH 端口转发下使用，切勿挂到公网隧道。";
+      note.classList.remove("hidden");
+    } else if (mode === "token") {
+      note.textContent = "MCP 端点只接受各项目的 token，OAuth 端点已关闭（auth=token）。";
+      note.classList.remove("hidden");
+    } else {
+      note.classList.add("hidden");
+    }
   }
 
   $("#form-login").addEventListener("submit", function (ev) {
@@ -175,31 +204,36 @@
       mcpTd.appendChild(copyMcp);
       tr.appendChild(mcpTd);
 
-      // Token（掩码 + 显示完整 + 复制）
+      // Token（掩码 + 显示完整 + 复制）；auth=none 时 token 不参与鉴权
       var tokTd = el("td");
-      var tokSpan = el("span", { class: "mono token-value" }, p.token);
-      tokTd.appendChild(tokSpan);
-      var eye = el("button", { class: "btn btn-small", title: "显示完整 token" }, "👁");
       var fullToken = null;
-      eye.addEventListener("click", function () {
-        if (fullToken) { tokSpan.textContent = fullToken; return; }
-        apiJson("/api/projects/" + encodeURIComponent(p.id)).then(function (d) {
-          fullToken = d.project.token;
-          tokSpan.textContent = fullToken;
-        }).catch(function (err) { showBanner("获取 token 失败：" + err.message, true); });
-      });
-      var copyTok = el("button", { class: "btn btn-small", title: "复制完整 token" }, "复制");
-      copyTok.addEventListener("click", function () {
-        if (fullToken) { copyText(fullToken, copyTok); return; }
-        apiJson("/api/projects/" + encodeURIComponent(p.id)).then(function (d) {
-          fullToken = d.project.token;
-          tokSpan.textContent = fullToken;
-          copyText(fullToken, copyTok);
-        }).catch(function (err) { showBanner("获取 token 失败：" + err.message, true); });
-      });
-      tokTd.appendChild(document.createTextNode(" "));
-      tokTd.appendChild(eye);
-      tokTd.appendChild(copyTok);
+      var tokSpan = null;
+      if (state.auth === "none") {
+        tokTd.appendChild(el("span", { class: "muted" }, "未启用（auth=none）"));
+      } else {
+        tokSpan = el("span", { class: "mono token-value" }, p.token);
+        tokTd.appendChild(tokSpan);
+        var eye = el("button", { class: "btn btn-small", title: "显示完整 token" }, "👁");
+        eye.addEventListener("click", function () {
+          if (fullToken) { tokSpan.textContent = fullToken; return; }
+          apiJson("/api/projects/" + encodeURIComponent(p.id)).then(function (d) {
+            fullToken = d.project.token;
+            tokSpan.textContent = fullToken;
+          }).catch(function (err) { showBanner("获取 token 失败：" + err.message, true); });
+        });
+        var copyTok = el("button", { class: "btn btn-small", title: "复制完整 token" }, "复制");
+        copyTok.addEventListener("click", function () {
+          if (fullToken) { copyText(fullToken, copyTok); return; }
+          apiJson("/api/projects/" + encodeURIComponent(p.id)).then(function (d) {
+            fullToken = d.project.token;
+            tokSpan.textContent = fullToken;
+            copyText(fullToken, copyTok);
+          }).catch(function (err) { showBanner("获取 token 失败：" + err.message, true); });
+        });
+        tokTd.appendChild(document.createTextNode(" "));
+        tokTd.appendChild(eye);
+        tokTd.appendChild(copyTok);
+      }
       tr.appendChild(tokTd);
 
       // 操作
@@ -213,7 +247,7 @@
         if (!confirm("确定要重新生成项目「" + p.name + "」的 token 吗？\n旧 token 将立即失效，所有使用旧 token 的连接器都会断开。")) return;
         apiJson("/api/projects/" + encodeURIComponent(p.id) + "/regenerate-token", { method: "POST" }).then(function (d) {
           fullToken = d.project.token;
-          tokSpan.textContent = fullToken;
+          if (tokSpan) tokSpan.textContent = fullToken;
           showBanner("项目「" + p.name + "」的新 token：" + fullToken + "（请立即复制保存，旧 token 已失效）");
         }).catch(function (err) { showBanner("重置 token 失败：" + err.message, true); });
       });

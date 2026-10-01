@@ -97,6 +97,10 @@ function applyMcpCors(req: http.IncomingMessage, res: http.ServerResponse): void
 export function startHttpServer(ctx: HttpContext): http.Server {
   const { config, store, audit, oauth } = ctx;
   const sessions = new Map<string, SessionEntry>();
+  // OAuth is only reachable in the default "any" mode: the other modes exist to
+  // run the MCP endpoints on static tokens or with no authentication at all.
+  const oauthEnabled = config.auth === "any";
+  const authRequired = config.auth !== "none";
 
   const httpServer = http.createServer(async (req, res) => {
     try {
@@ -129,7 +133,8 @@ export function startHttpServer(ctx: HttpContext): http.Server {
 
       // OAuth 2.1 authorization server + RFC 9728/8414 discovery (needed by
       // clients that authorize a connector instead of pasting a project token).
-      if (await handleOAuthRequest({ config, store, oauth, audit }, req, res, url)) {
+      // Disabled outside "any" mode: those paths fall through to 404.
+      if (oauthEnabled && (await handleOAuthRequest({ config, store, oauth, audit }, req, res, url))) {
         return;
       }
 
@@ -164,32 +169,35 @@ export function startHttpServer(ctx: HttpContext): http.Server {
       }
 
       // Per-project token auth: the project's static token, or an OAuth access
-      // token that was authorized for exactly this project.
-      const provided = extractToken(req, url);
-      if (!tokenMatches(provided, project.token)) {
-        const grant = provided ? oauth.verifyAccessToken(provided) : null;
-        if (grant && grant.projectSlug !== project.slug) {
-          jsonRpcError(
-            res,
-            403,
-            -32003,
-            `Forbidden: this OAuth token is authorized for project "${grant.projectSlug}", not "${slug}"`,
-          );
-          return;
-        }
-        if (!grant) {
-          // RFC 6750 challenge so MCP clients can start the OAuth flow.
-          res.setHeader(
-            "WWW-Authenticate",
-            `Bearer realm="remote-sandbox-mcp", resource_metadata="${protectedResourceMetadataUrl(req, config, slug)}", error="invalid_token", error_description="a project token or an authorized OAuth access token is required"`,
-          );
-          jsonRpcError(
-            res,
-            401,
-            -32001,
-            "Unauthorized: invalid or missing token (use this project's token, or authorize via OAuth)",
-          );
-          return;
+      // token that was authorized for exactly this project. Skipped entirely in
+      // "none" mode.
+      if (authRequired) {
+        const provided = extractToken(req, url);
+        if (!tokenMatches(provided, project.token)) {
+          const grant = oauthEnabled && provided ? oauth.verifyAccessToken(provided) : null;
+          if (grant && grant.projectSlug !== project.slug) {
+            jsonRpcError(
+              res,
+              403,
+              -32003,
+              `Forbidden: this OAuth token is authorized for project "${grant.projectSlug}", not "${slug}"`,
+            );
+            return;
+          }
+          if (!grant) {
+            // RFC 6750 challenge so MCP clients can start the OAuth flow.
+            res.setHeader(
+              "WWW-Authenticate",
+              `Bearer realm="remote-sandbox-mcp", resource_metadata="${protectedResourceMetadataUrl(req, config, slug)}", error="invalid_token", error_description="a project token or an authorized OAuth access token is required"`,
+            );
+            jsonRpcError(
+              res,
+              401,
+              -32001,
+              "Unauthorized: invalid or missing token (use this project's token, or authorize via OAuth)",
+            );
+            return;
+          }
         }
       }
 

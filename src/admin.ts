@@ -160,13 +160,28 @@ export async function handleAdminApi(
   const method = req.method ?? "GET";
 
   try {
+    // /api/status — how the MCP endpoints currently authenticate; the console
+    // uses it to hide the OAuth card and relabel the token column.
+    if (seg[1] === "status" && seg.length === 2 && method === "GET") {
+      sendJson(res, 200, { auth: config.auth, oauthEnabled: config.auth === "any" });
+      return;
+    }
+
     // /api/oauth/clients — list authorized OAuth clients (read-only, masked secrets).
+    // OAuth is not served outside "any" mode, so the list is empty there.
     if (seg[1] === "oauth") {
+      const oauthEnabled = config.auth === "any";
       if (seg[2] === "clients" && seg.length === 3 && method === "GET") {
-        sendJson(res, 200, { clients: oauth.listClients(), stats: oauth.stats() });
+        sendJson(res, 200, {
+          clients: oauthEnabled ? oauth.listClients() : [],
+          stats: oauthEnabled ? oauth.stats() : { clients: 0, accessTokens: 0, refreshTokens: 0 },
+        });
         return;
       }
       if (seg[2] === "clients" && seg.length === 4 && method === "DELETE") {
+        if (!oauthEnabled) {
+          throw new StoreError(404, `OAuth is disabled (auth mode is "${config.auth}")`);
+        }
         const clientId = decodeURIComponent(seg[3]);
         if (!oauth.removeClient(clientId)) throw new StoreError(404, `oauth client not found: ${clientId}`);
         sendJson(res, 200, { ok: true, clients: oauth.listClients(), stats: oauth.stats() });

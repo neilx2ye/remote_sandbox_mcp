@@ -36,6 +36,7 @@
 <!-- 主视图 -->
 <main id="view-main" class="hidden">
   <div id="banner" class="banner hidden" role="status" aria-live="polite"></div>
+  <div id="auth-note" class="warn hidden"></div>
 
   <div class="toolbar">
     <h2>项目 / MCP 端点<span id="projects-count" class="count"></span></h2>
@@ -82,7 +83,7 @@
   </section>
 
   <!-- OAuth 授权 -->
-  <section class="card">
+  <section class="card" id="card-oauth">
     <div class="toolbar" style="margin-bottom:12px">
       <h2>OAuth 授权<span id="oauth-count" class="count"></span></h2>
       <div class="toolbar-actions">

@@ -9,6 +9,36 @@ export interface ExecConfig {
   deny: string[];
 }
 
+/**
+ * How callers authenticate against the MCP endpoints.
+ * - "any":   the project's static token, or an OAuth access token (default).
+ * - "token": only the project's static token; the OAuth endpoints are not served.
+ * - "none":  no authentication at all; the OAuth endpoints are not served.
+ *
+ * "none" is only safe when the listener is unreachable from anywhere untrusted
+ * (loopback bind plus an SSH port-forward).
+ */
+export type McpAuthMode = "any" | "token" | "none";
+
+export const MCP_AUTH_MODES: readonly McpAuthMode[] = ["any", "token", "none"];
+
+export function parseMcpAuthMode(value: unknown): McpAuthMode {
+  const v = typeof value === "string" ? value.trim().toLowerCase() : "";
+  if (v === "any" || v === "token" || v === "none") return v;
+  throw new Error(`Invalid MCP auth mode: ${JSON.stringify(value)} (expected ${MCP_AUTH_MODES.join(" | ")})`);
+}
+
+/** 127.0.0.0/8, ::1 and localhost - the only bind addresses safe for "none". */
+export function isLoopbackHost(host: string): boolean {
+  const h = host.trim().toLowerCase().replace(/^\[|\]$/g, "");
+  if (h === "localhost" || h === "::1" || h === "0:0:0:0:0:0:0:1") return true;
+  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(h);
+  if (!m) return false;
+  const octets = m.slice(1).map(Number);
+  if (octets.some((o) => o > 255)) return false;
+  return octets[0] === 127;
+}
+
 /** The sandbox-related configuration a tool handler needs (per project). */
 export interface ToolScope {
   root: string;
@@ -26,6 +56,8 @@ export interface AppConfig {
   maxFileBytes: number;
   /** Master switch: forces every project read-only. */
   readOnly: boolean;
+  /** How /mcp endpoints authenticate callers (see McpAuthMode). */
+  auth: McpAuthMode;
   stdio: boolean;
   /** Global exec defaults; exec.enabled=false is a master switch for all projects. */
   exec: ExecConfig;
@@ -49,6 +81,7 @@ interface CliArgs {
   token?: string;
   adminToken?: string;
   publicUrl?: string;
+  auth?: string;
   stdio?: boolean;
   readOnly?: boolean;
   noExec?: boolean;
@@ -94,6 +127,9 @@ export function parseCliArgs(argv: string[]): CliArgs {
       case "--public-url":
         out.publicUrl = next();
         break;
+      case "--auth":
+        out.auth = next();
+        break;
       case "--stdio":
         out.stdio = true;
         break;
@@ -130,17 +166,20 @@ Options:
   --admin-token <t>   Admin console / API token (default: random, printed at startup)
   --public-url <url>  Public origin used in OAuth metadata, e.g. https://mcp.example.com
                       (default: derived from Host / X-Forwarded-* headers)
+  --auth <mode>       How /mcp endpoints authenticate: any | token | none (default any)
+                      any = project token or OAuth; token = project token only;
+                      none = no authentication (only safe behind loopback/SSH forward)
   --stdio             Serve MCP over stdio (uses the "default" project) instead of HTTP
   --readonly          Master switch: every project becomes read-only
   --no-exec           Master switch: disable exec_run for all projects
   --config <path>     Config file path (default ./sandbox.config.json)
   --help              Show this help
 
-Environment: MCP_ROOT, MCP_PORT, MCP_HOST, MCP_TOKEN, MCP_ADMIN_TOKEN, MCP_PUBLIC_URL
+Environment: MCP_ROOT, MCP_PORT, MCP_HOST, MCP_TOKEN, MCP_ADMIN_TOKEN, MCP_PUBLIC_URL, MCP_AUTH
 Priority: CLI args > env > config file > defaults
 
 MCP endpoints: /mcp (default project) and /mcp/<slug> per project.
-OAuth (connector authorization): /.well-known/*, /oauth/* - expose these on the tunnel too.
+OAuth (connector authorization): /.well-known/*, /oauth/* - only served when --auth any.
 Admin console: /admin (use only via local access or SSH port-forward).
 `);
 }
@@ -152,6 +191,7 @@ interface FileConfig {
   token?: string;
   adminToken?: string;
   publicUrl?: string;
+  auth?: string;
   maxFileBytes?: number;
   readOnly?: boolean;
   exec?: {
@@ -228,6 +268,16 @@ export function loadConfig(argv: string[] = process.argv.slice(2)): AppConfig {
 
   const readOnly = cli.readOnly ?? file.readOnly ?? false;
   const execEnabled = cli.noExec ? false : (file.exec?.enabled ?? true);
+  const auth = parseMcpAuthMode(cli.auth ?? env.MCP_AUTH ?? file.auth ?? "any");
+  // "none" plus a non-loopback bind hands every reachable caller full sandbox
+  // access, so refuse that combination outright.
+  if (auth === "none" && !isLoopbackHost(host)) {
+    throw new Error(
+      `--auth none refuses to bind a non-loopback address (host=${host}): with no authentication, ` +
+        `anything that can reach this port gets full read/write/exec access to every project root. ` +
+        `Keep host=127.0.0.1 and reach it through an SSH port-forward, or choose --auth token.`,
+    );
+  }
 
   const config: AppConfig = {
     host,
@@ -236,6 +286,7 @@ export function loadConfig(argv: string[] = process.argv.slice(2)): AppConfig {
     adminTokenProvided: adminToken !== null,
     maxFileBytes,
     readOnly,
+    auth,
     stdio: cli.stdio ?? false,
     exec: {
       enabled: execEnabled,

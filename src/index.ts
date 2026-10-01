@@ -83,12 +83,25 @@ async function main(): Promise<void> {
   }
   banner.push(
     ``,
-    `OAuth (connector authorization, pick the project on the consent page):`,
-    `  discovery    : /.well-known/oauth-protected-resource[/mcp/<slug>]  and  /.well-known/oauth-authorization-server`,
-    `  authorize    : /oauth/authorize   (open in a browser, log in with the admin token)`,
-    `  public origin: ${config.publicUrl ?? "(derived per request from Host / X-Forwarded-*)"}`,
-    `  NOTE: a public tunnel must expose /.well-known/* and /oauth/* as well as /mcp*.`,
+    `MCP auth     : ${config.auth}` +
+      (config.auth === "none"
+        ? "  (NO AUTHENTICATION - only safe on loopback / SSH port-forward)"
+        : config.auth === "token"
+          ? "  (project tokens only)"
+          : "  (project tokens + OAuth)"),
   );
+  if (config.auth === "any") {
+    banner.push(
+      ``,
+      `OAuth (connector authorization, pick the project on the consent page):`,
+      `  discovery    : /.well-known/oauth-protected-resource[/mcp/<slug>]  and  /.well-known/oauth-authorization-server`,
+      `  authorize    : /oauth/authorize   (open in a browser, log in with the admin token)`,
+      `  public origin: ${config.publicUrl ?? "(derived per request from Host / X-Forwarded-*)"}`,
+      `  NOTE: a public tunnel must expose /.well-known/* and /oauth/* as well as /mcp*.`,
+    );
+  } else {
+    banner.push(``, `OAuth endpoints are disabled (--auth ${config.auth}); use the admin console or /api.`);
+  }
   if (seeded?.tokenGenerated) {
     banner.push(
       ``,
@@ -105,11 +118,21 @@ async function main(): Promise<void> {
       `Set MCP_ADMIN_TOKEN env var or --admin-token to use a fixed token.`,
     );
   }
-  banner.push(
-    ``,
-    `WARNING: keep /admin and /api OFF public tunnels - expose only /mcp* (+ /.well-known/*, /oauth/* when using OAuth)`,
-    `and access the console locally or via: ssh -L ${config.port}:127.0.0.1:${config.port} <server>`,
-  );
+  if (config.auth === "none") {
+    banner.push(
+      ``,
+      `DANGER: auth mode "none" serves /mcp* with NO authentication. Anyone who can reach this`,
+      `port gets full read/write/exec access to every project root. Keep the listener on`,
+      `127.0.0.1 (currently bound to ${config.host}) and never put it on a public tunnel.`,
+    );
+  } else {
+    banner.push(
+      ``,
+      `WARNING: keep /admin and /api OFF public tunnels - expose only /mcp*` +
+        (config.auth === "any" ? ` (+ /.well-known/*, /oauth/* when using OAuth)` : ``),
+    );
+  }
+  banner.push(`Access the console locally or via: ssh -L ${config.port}:127.0.0.1:${config.port} <server>`);
   printBanner(banner);
 
   const shutdown = (): void => {

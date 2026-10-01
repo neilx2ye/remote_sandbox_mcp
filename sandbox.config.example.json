@@ -5,6 +5,7 @@
   "token": "seed-token-for-the-default-project",
   "adminToken": "change-me-to-a-long-random-string",
   "publicUrl": "https://mcp.example.com",
+  "auth": "any",
   "maxFileBytes": 5242880,
   "readOnly": false,
   "exec": {
