@@ -5,6 +5,7 @@ import { AuditLog, audited } from "./util/audit.js";
 import { registerFileTools, registerReadFileTools } from "./tools/files.js";
 import { registerSearchTools } from "./tools/search.js";
 import { registerExecTools } from "./tools/exec.js";
+import { registerUploadTools } from "./tools/upload.js";
 
 export interface ToolResult {
   isError?: boolean;
@@ -66,6 +67,8 @@ export function createServer(scope: ProjectScope, audit: AuditLog, sessionRef: S
         readOnly: scope.readOnly,
         execEnabled: scope.exec.enabled && !scope.readOnly,
         maxFileBytes: scope.maxFileBytes,
+        fileUploadEnabled: !scope.readOnly,
+        fileUploadTool: scope.readOnly ? null : "fs_upload",
       };
       return { content: [{ type: "text" as const, text: JSON.stringify(info, null, 2) }] };
     }),
@@ -73,6 +76,7 @@ export function createServer(scope: ProjectScope, audit: AuditLog, sessionRef: S
 
   if (!scope.readOnly) {
     registerFileTools(server, scope, wrap);
+    registerUploadTools(server, scope, wrap);
     registerSearchTools(server, scope, wrap);
     if (scope.exec.enabled) {
       registerExecTools(server, scope, wrap);
